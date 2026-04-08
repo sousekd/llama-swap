@@ -238,6 +238,253 @@ func TestProxyManager_PersistentExclusiveGroupNotEvicted(t *testing.T) {
 	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
 }
 
+// Test that exclusive groups in different pools do not affect each other.
+func TestProxyManager_PoolIsolation(t *testing.T) {
+	config := config.AddDefaultGroupToConfig(config.Config{
+		HealthCheckTimeout: 15,
+		Models: map[string]config.ModelConfig{
+			"model1": getTestSimpleResponderConfig("model1"),
+			"model2": getTestSimpleResponderConfig("model2"),
+		},
+		LogLevel: "error",
+		Groups: map[string]config.GroupConfig{
+			"gpu0": {
+				Exclusive: true,
+				Pool:      "GPU-0",
+				Members:   []string{"model1"},
+			},
+			"gpu1": {
+				Exclusive: true,
+				Pool:      "GPU-1",
+				Members:   []string{"model2"},
+			},
+		},
+	})
+
+	proxy := New(config)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	// load both models; they should coexist because they are in different pools
+	for _, requestedModel := range []string{"model1", "model2"} {
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, requestedModel)
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), requestedModel)
+	}
+
+	// both should remain running since they are in different pools
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+}
+
+// Test that exclusive groups in the same pool still evict each other.
+func TestProxyManager_PoolExclusiveWithinPool(t *testing.T) {
+	config := config.AddDefaultGroupToConfig(config.Config{
+		HealthCheckTimeout: 15,
+		Models: map[string]config.ModelConfig{
+			"model1": getTestSimpleResponderConfig("model1"),
+			"model2": getTestSimpleResponderConfig("model2"),
+			"model3": getTestSimpleResponderConfig("model3"),
+		},
+		LogLevel: "error",
+		Groups: map[string]config.GroupConfig{
+			"gpu0-big": {
+				Exclusive: true,
+				Pool:      "GPU-0",
+				Members:   []string{"model1"},
+			},
+			"gpu0-small": {
+				Exclusive: false,
+				Pool:      "GPU-0",
+				Members:   []string{"model2"},
+			},
+			"gpu1": {
+				Exclusive: true,
+				Pool:      "GPU-1",
+				Members:   []string{"model3"},
+			},
+		},
+	})
+
+	proxy := New(config)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	// load model3 on GPU-1, model1 on GPU-0 (exclusive), then model2 on GPU-0 (non-exclusive)
+	for _, requestedModel := range []string{"model3", "model1", "model2"} {
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, requestedModel)
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	// model1 (exclusive, GPU-0) should be evicted by model2 (non-exclusive, same pool)
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateStopped)
+	// model2 should be running
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+	// model3 on GPU-1 should be unaffected
+	assert.Equal(t, proxy.findGroupByModelName("model3").processes["model3"].CurrentState(), StateReady)
+}
+
+// Test that persistent groups are still protected within the same pool.
+func TestProxyManager_PoolPersistentWithinPool(t *testing.T) {
+	config := config.AddDefaultGroupToConfig(config.Config{
+		HealthCheckTimeout: 15,
+		Models: map[string]config.ModelConfig{
+			"model1": getTestSimpleResponderConfig("model1"),
+			"model2": getTestSimpleResponderConfig("model2"),
+		},
+		LogLevel: "error",
+		Groups: map[string]config.GroupConfig{
+			"always-on": {
+				Exclusive:  false,
+				Persistent: true,
+				Pool:       "GPU-0",
+				Members:    []string{"model1"},
+			},
+			"big-model": {
+				Exclusive: true,
+				Pool:      "GPU-0",
+				Members:   []string{"model2"},
+			},
+		},
+	})
+
+	proxy := New(config)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	// load persistent model first, then exclusive model in same pool
+	for _, requestedModel := range []string{"model1", "model2"} {
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, requestedModel)
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	// persistent group should survive despite exclusive in same pool
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+}
+
+// Test that a global exclusive group (no pool) evicts groups in named pools.
+func TestProxyManager_PoolGlobalEvictsAllPools(t *testing.T) {
+	config := config.AddDefaultGroupToConfig(config.Config{
+		HealthCheckTimeout: 15,
+		Models: map[string]config.ModelConfig{
+			"model1": getTestSimpleResponderConfig("model1"),
+			"model2": getTestSimpleResponderConfig("model2"),
+			"model3": getTestSimpleResponderConfig("model3"),
+		},
+		LogLevel: "error",
+		Groups: map[string]config.GroupConfig{
+			"gpu0": {
+				Exclusive: true,
+				Pool:      "GPU-0",
+				Members:   []string{"model1"},
+			},
+			"gpu1": {
+				Exclusive: true,
+				Pool:      "GPU-1",
+				Members:   []string{"model2"},
+			},
+			"spanning": {
+				Exclusive: true,
+				// no pool — global, interacts with all pools
+				Members: []string{"model3"},
+			},
+		},
+	})
+
+	proxy := New(config)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	// load model1 (GPU-0) and model2 (GPU-1)
+	for _, requestedModel := range []string{"model1", "model2"} {
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, requestedModel)
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	// both should be running
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+
+	// now load model3 (global exclusive) — should evict both named pools
+	{
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, "model3")
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateStopped)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateStopped)
+	assert.Equal(t, proxy.findGroupByModelName("model3").processes["model3"].CurrentState(), StateReady)
+}
+
+// Test that loading a named-pool group evicts a running global exclusive group.
+func TestProxyManager_PoolNamedEvictsGlobal(t *testing.T) {
+	config := config.AddDefaultGroupToConfig(config.Config{
+		HealthCheckTimeout: 15,
+		Models: map[string]config.ModelConfig{
+			"model1": getTestSimpleResponderConfig("model1"),
+			"model2": getTestSimpleResponderConfig("model2"),
+		},
+		LogLevel: "error",
+		Groups: map[string]config.GroupConfig{
+			"spanning": {
+				Exclusive: true,
+				// no pool — global
+				Members: []string{"model1"},
+			},
+			"gpu0": {
+				Exclusive: false,
+				Pool:      "GPU-0",
+				Members:   []string{"model2"},
+			},
+		},
+	})
+
+	proxy := New(config)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	// load model1 (global exclusive)
+	{
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, "model1")
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+
+	// load model2 (GPU-0, non-exclusive) — should evict global exclusive
+	{
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, "model2")
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateStopped)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+}
+
 // When a request for a different model comes in ProxyManager should wait until
 // the first request is complete before swapping. Both requests should complete
 func TestProxyManager_SwapMultiProcessParallelRequests(t *testing.T) {

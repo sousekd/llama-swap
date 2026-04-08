@@ -308,6 +308,11 @@
                         "default": false,
                         "description": "Prevents other groups from unloading the models in this group. Does not affect individual model behaviour."
                     },
+                    "pool": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Controls which groups can affect each other. Groups in the same pool affect each other. Different pools are independent. Groups without a pool are global and interact with all pools."
+                    },
                     "members": {
                         "type": "array",
                         "items": {

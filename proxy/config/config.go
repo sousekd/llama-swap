@@ -82,6 +82,7 @@ type GroupConfig struct {
 	Exclusive  bool     `yaml:"exclusive"`
 	Persistent bool     `yaml:"persistent"`
 	Members    []string `yaml:"members"`
+	Pool       string   `yaml:"pool"`
 }
 
 var (

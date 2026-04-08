@@ -393,6 +393,43 @@ groups:
       - "forever-modelB"
       - "forever-modelc"
 
+  # pool controls which groups can affect each other.
+  # Groups in the same pool affect each other. Different pools are independent.
+  # Groups without a pool are global and interact with all pools.
+  #
+  # Example: a 2-GPU machine.
+  # - GPU-0 has one exclusive group and one non-exclusive group.
+  # - GPU-1 has its own exclusive group.
+  # - One global group spans all GPUs.
+
+  # Exclusive group on GPU-0
+  "gpu0-exclusive":
+    exclusive: true
+    pool: "GPU-0"  # optional, default: "" (global)
+    members:
+      - "gpu0-exclusive-model"
+
+  # Non-exclusive group on GPU-0
+  "gpu0-shared":
+    swap: false
+    pool: "GPU-0"
+    members:
+      - "gpu0-shared-model-a"
+      - "gpu0-shared-model-b"
+
+  # Exclusive group on GPU-1
+  "gpu1-exclusive":
+    exclusive: true
+    pool: "GPU-1"
+    members:
+      - "gpu1-exclusive-model"
+
+  # Global exclusive group spanning all GPUs
+  "all-gpus":
+    exclusive: true
+    members:
+      - "global-model"
+
 # hooks: a dictionary of event triggers and actions
 # - optional, default: empty dictionary
 # - the only supported hook is on_startup
