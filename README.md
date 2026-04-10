@@ -2,7 +2,7 @@
 
 This repository is a customized fork of [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap).
 
-The fork is kept close to upstream, but carries a small set of changes aimed at more complex model-group configurations.
+The fork is kept close to upstream, but carries a small set of changes aimed at more complex model-group configurations and a few practical UI/privacy controls.
 
 For the upstream project, general installation instructions, and the broader feature set, see the original repository:
 
@@ -12,6 +12,7 @@ For the upstream project, general installation instructions, and the broader fea
 
 - Bidirectional group exclusivity: fixes the one-way exclusivity behavior so conflicting groups unload each other consistently. Related upstream discussions: [issue #215](https://github.com/mostlygeek/llama-swap/issues/215), [PR #631](https://github.com/mostlygeek/llama-swap/pull/631)
 - Pool-scoped group exclusivity: adds an optional `pool` field so exclusivity applies within a named resource boundary instead of always globally. Related upstream discussion: [issue #632](https://github.com/mostlygeek/llama-swap/issues/632)
+- Admin PIN lock for Activity captures: adds an optional `adminPin` setting and a UI unlock flow so sensitive capture data in the Activity panel is not immediately visible to all UI users. Related upstream discussion: [discussion #640](https://github.com/mostlygeek/llama-swap/discussions/640)
 
 ## Change details
 
@@ -80,7 +81,32 @@ In the example above:
 - `gpu1-large` is isolated from the `GPU-0` groups because it uses a different pool
 - a group with no `pool` would still be treated as global and could interact with both `GPU-0` and `GPU-1`
 
+### 3. Admin PIN lock for Activity captures
+
+This fork adds an optional `adminPin` top-level configuration setting for deployments where the UI is broadly accessible, but request and response capture data should remain restricted.
+
+Example:
+
+```yaml
+adminPin: "1234"
+```
+
+Behavior:
+
+- if `adminPin` is not configured, the UI behaves like upstream
+- if `adminPin` is configured, the UI exposes an unlock action
+- viewing captured Activity request/response bodies requires a successful PIN verification
+- the unlocked state is stored only in the current browser session and resets when the tab/session ends
+
+This is meant as a lightweight privacy control for shared internal deployments where users may need access to the general UI, model list, or status views, but should not automatically see other users' captured prompts and responses.
+
+Current scope:
+
+- Activity metrics remain visible
+- the protection applies to viewing capture contents from the Activity panel
+- this is not a full multi-user authentication or role-based access system
+
 ## Scope of this fork
 
 This fork intentionally keeps its public delta small.
-The goal is to stay close to upstream while carrying a few configuration-oriented changes that are useful in more complex local deployments.
+The goal is to stay close to upstream while carrying a few targeted changes that are useful in more complex local deployments.
