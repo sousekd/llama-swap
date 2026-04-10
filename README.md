@@ -106,6 +106,12 @@ Current scope:
 - the protection applies to viewing capture contents from the Activity panel
 - this is not a full multi-user authentication or role-based access system
 
+Warning:
+
+- this is not true security, only a UI-level barrier
+- the current implementation mainly disables the normal UI path for viewing capture details
+- the capture data is not independently protected by the PIN at the API level, so users with browser developer tools or direct API access can still retrieve it with minimal effort
+
 ## Scope of this fork
 
 This fork intentionally keeps its public delta small.
