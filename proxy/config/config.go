@@ -151,6 +151,9 @@ type Config struct {
 	// support API keys, see issue #433, #50, #251
 	RequiredAPIKeys []string `yaml:"apiKeys"`
 
+	// admin PIN to lock sensitive UI features (activity captures, etc.)
+	AdminPin string `yaml:"adminPin"`
+
 	// support remote peers, see issue #433, #296
 	Peers PeerDictionaryConfig `yaml:"peers"`
 }

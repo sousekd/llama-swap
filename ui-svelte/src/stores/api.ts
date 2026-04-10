@@ -1,6 +1,7 @@
 import { writable } from "svelte/store";
 import type { Model, Metrics, VersionInfo, LogData, APIEventEnvelope, ReqRespCapture, InFlightStats } from "../lib/types";
 import { connectionState } from "./theme";
+import { pinRequired } from "./pin";
 
 const LOG_LENGTH_LIMIT = 1024 * 100; /* 100KB of log data */
 
@@ -119,6 +120,7 @@ connectionState.subscribe(async (status) => {
       }
       const data: VersionInfo = await response.json();
       versionInfo.set(data);
+      pinRequired.set(data.pin_required ?? false);
     } catch (error) {
       console.error(error);
     }
