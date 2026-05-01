@@ -1749,11 +1749,82 @@ models:
 	assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
 
 	// Check for attributes
-	response := map[string]string{}
+	response := map[string]any{}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	for key, value := range versionTest {
 		assert.Equal(t, value, response[key], "%s value %s should match response %s", key, value, response[key])
 	}
+	assert.Equal(t, false, response["pin_required"])
+}
+
+func TestProxyManager_APIVerifyPin(t *testing.T) {
+	t.Run("validates configured pin", func(t *testing.T) {
+		cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+adminPin: "1234"
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+`)
+
+		proxy := New(cfg)
+		defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+		req := httptest.NewRequest("POST", "/api/verify-pin", strings.NewReader(`{"pin":"1234"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.True(t, gjson.Get(w.Body.String(), "ok").Bool())
+	})
+
+	t.Run("rejects invalid pin", func(t *testing.T) {
+		cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+adminPin: "1234"
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+`)
+
+		proxy := New(cfg)
+		defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+		req := httptest.NewRequest("POST", "/api/verify-pin", strings.NewReader(`{"pin":"9999"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.False(t, gjson.Get(w.Body.String(), "ok").Bool())
+	})
+
+	t.Run("allows requests when pin is not configured", func(t *testing.T) {
+		cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+`)
+
+		proxy := New(cfg)
+		defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+		req := httptest.NewRequest("POST", "/api/verify-pin", strings.NewReader(`{"pin":"anything"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.True(t, gjson.Get(w.Body.String(), "ok").Bool())
+	})
 }
 
 func TestProxyManager_APIKeyAuth(t *testing.T) {
