@@ -3,7 +3,11 @@
   import { screenWidth, toggleTheme, themeMode, appTitle, isNarrow } from "../stores/theme";
   import { currentRoute } from "../stores/route";
   import { playgroundActivity } from "../stores/playgroundActivity";
+  import { isLocked } from "../stores/pin";
   import ConnectionStatus from "./ConnectionStatus.svelte";
+  import PinDialog from "./PinDialog.svelte";
+
+  let pinDialogOpen = $state(false);
 
   function handleTitleChange(newTitle: string): void {
     const sanitized = newTitle.replace(/\n/g, "").trim().substring(0, 64) || "llama-swap";
@@ -94,6 +98,19 @@
     >
       Performance
     </a>
+    {#if $isLocked}
+      <button
+        onclick={() => { pinDialogOpen = true; }}
+        title="Unlock"
+        class="p-1 text-gray-600 hover:text-black dark:text-gray-300 dark:hover:text-gray-100"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
+          <g transform="translate(2 2) scale(0.83)">
+            <path fill-rule="evenodd" d="M12 1.5a5.25 5.25 0 0 0-5.25 5.25v3a3 3 0 0 0-3 3v6.75a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3v-6.75a3 3 0 0 0-3-3v-3c0-2.9-2.35-5.25-5.25-5.25Zm3.75 8.25v-3a3.75 3.75 0 1 0-7.5 0v3h7.5Z" clip-rule="evenodd" />
+          </g>
+        </svg>
+      </button>
+    {/if}
     <button onclick={toggleTheme} title="Toggle theme (current: {$themeMode})">
       {#if $themeMode === "system"}
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
@@ -119,6 +136,8 @@
     <ConnectionStatus />
   </menu>
 </header>
+
+<PinDialog bind:open={pinDialogOpen} />
 
 <style>
   .activity-link {

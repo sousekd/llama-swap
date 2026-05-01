@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -37,6 +38,7 @@ func addApiHandlers(pm *ProxyManager) {
 		apiGroup.GET("/performance", pm.apiGetPerformance)
 		apiGroup.GET("/version", pm.apiGetVersion)
 		apiGroup.GET("/captures/:id", pm.apiGetCapture)
+		apiGroup.POST("/verify-pin", pm.apiVerifyPin)
 	}
 }
 
@@ -328,11 +330,37 @@ func (pm *ProxyManager) apiUnloadSingleModelHandler(c *gin.Context) {
 }
 
 func (pm *ProxyManager) apiGetVersion(c *gin.Context) {
-	c.JSON(http.StatusOK, map[string]string{
-		"version":    pm.version,
-		"commit":     pm.commit,
-		"build_date": pm.buildDate,
+	c.JSON(http.StatusOK, gin.H{
+		"version":      pm.version,
+		"commit":       pm.commit,
+		"build_date":   pm.buildDate,
+		"pin_required": len(pm.config.AdminPin) > 0,
 	})
+}
+
+// apiVerifyPin validates an admin PIN supplied by the UI. When no PIN is
+// configured the endpoint always succeeds so the UI can treat the install as
+// unlocked. The comparison uses constant-time semantics to avoid leaking the
+// PIN value via timing. See discussion #640.
+func (pm *ProxyManager) apiVerifyPin(c *gin.Context) {
+	var req struct {
+		Pin string `json:"pin"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	if len(pm.config.AdminPin) == 0 {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+		return
+	}
+
+	if subtle.ConstantTimeCompare([]byte(req.Pin), []byte(pm.config.AdminPin)) == 1 {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false})
+	}
 }
 
 func (pm *ProxyManager) apiGetCapture(c *gin.Context) {
