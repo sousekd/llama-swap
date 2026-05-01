@@ -18,6 +18,7 @@ type ProcessGroup struct {
 	swap       bool
 	exclusive  bool
 	persistent bool
+	pool       string
 
 	proxyLogger    *logmon.Monitor
 	upstreamLogger *logmon.Monitor
@@ -55,6 +56,7 @@ func NewProcessGroup(id string, config config.Config, proxyLogger *logmon.Monito
 		swap:           groupConfig.Swap,
 		exclusive:      groupConfig.Exclusive,
 		persistent:     groupConfig.Persistent,
+		pool:           groupConfig.Pool,
 		proxyLogger:    proxyLogger,
 		upstreamLogger: upstreamLogger,
 		processes:      make(map[string]*Process),
