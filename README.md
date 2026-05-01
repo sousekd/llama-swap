@@ -1,273 +1,127 @@
-![llama-swap header image](docs/assets/hero3.webp)
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/mostlygeek/llama-swap/total)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/mostlygeek/llama-swap/go-ci.yml)
-![GitHub Repo stars](https://img.shields.io/github/stars/mostlygeek/llama-swap)
+# llama-swap fork
 
-# llama-swap
+This repository is a customized fork of [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap).
 
-Run multiple generative AI models on your machine and hot-swap between them on demand. llama-swap works with any OpenAI and Anthropic API compatible server and is used by thousands of people to power their local AI workflows.
+The fork is kept close to upstream, but carries a small set of changes aimed at the legacy `groups:` configuration path and a practical UI/privacy control.
 
-Built in Go for performance and simplicity, llama-swap has zero dependencies and is incredibly easy to set up. Get started in minutes - just one binary and one configuration file.
+For the upstream project, general installation instructions, and the broader feature set, see the original repository:
 
-## Features:
+- [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap)
 
-- ✅ Easy to deploy and configure: one binary, one configuration file. no external dependencies
-- ✅ On-demand model switching
-- ✅ Use any local OpenAI compatible server (llama.cpp, vllm, tabbyAPI, stable-diffusion.cpp, etc.)
-  - future proof, upgrade your inference servers at any time.
-- ✅ OpenAI API supported endpoints:
-  - `v1/completions`
-  - `v1/chat/completions`
-  - `v1/responses`
-  - `v1/embeddings`
-  - `v1/models` - list available models
-  - `v1/audio/speech` ([#36](https://github.com/mostlygeek/llama-swap/issues/36))
-  - `v1/audio/transcriptions` ([docs](https://github.com/mostlygeek/llama-swap/issues/41#issuecomment-2722637867))
-  - `v1/audio/voices`
-  - `v1/images/generations`
-  - `v1/images/edits`
-- ✅ Anthropic API supported endpoints:
-  - `v1/messages`
-  - `v1/messages/count_tokens`
-- ✅ llama-server (llama.cpp) supported endpoints
-  - `v1/rerank`, `v1/reranking`, `/rerank`
-  - `/infill` - for code infilling
-  - `/completion` - for completion endpoint
-- ✅ SDAPI via [stable-diffusion.cpp's server](https://github.com/leejet/stable-diffusion.cpp/tree/master/examples/server)
-  - `/sdapi/v1/txt2img`
-  - `/sdapi/v1/img2img`
-  - `/sdapi/v1/loras` - requires `model` in request body to fetch the correct loras
-- ✅ llama-swap API
-  - `/ui` - web UI
-  - `/upstream/:model_id` - direct access to upstream server ([demo](https://github.com/mostlygeek/llama-swap/pull/31))
-  - `/running` - list currently running models ([#61](https://github.com/mostlygeek/llama-swap/issues/61))
-  - `POST /api/models/unload` - manually unload all running models ([#58](https://github.com/mostlygeek/llama-swap/issues/58))
-  - `POST /api/models/unload/:model_id` - unload a specific model
-  - `/logs` - remote log monitoring
-    - `GET /logs` returns buffered plain text logs.
-      - If `Accept: text/html` is sent, `/logs` redirects to `/ui/`.
-    - `GET /logs/stream` keeps the connection open for live log streaming.
-      - Stream endpoints send buffered history first by default; add `?no-history` to stream only new lines.
-    - `GET /logs/stream/proxy` streams proxy logs only.
-    - `GET /logs/stream/upstream` streams upstream process logs only.
-    - `GET /logs/stream/{model_id}` streams logs for one model (including IDs with slashes, like `author/model`).
-  - `/health` - just returns "OK"
-  - `/metrics` - system and GPU metrics for prometheus
-- ✅ API Key support - define keys to restrict access to API endpoints
-- ✅ Customizable
-  - Run concurrent models with a custom DSL swap matrix ([#643](https://github.com/mostlygeek/llama-swap/issues/643))
-  - Automatic unloading of models after timeout by setting a `ttl`
-  - Reliable Docker and Podman support using `cmd` and `cmdStop` together
-  - Preload models on startup with `hooks` ([#235](https://github.com/mostlygeek/llama-swap/pull/235))
+## Relationship to the upstream `matrix:` feature
 
-### Web UI
+Upstream introduced a solver-based [`matrix:` configuration](https://github.com/mostlygeek/llama-swap/pull/646) that handles concurrent model execution and eviction natively. A configuration must use either `matrix:` or the legacy `groups:`, not both. If you adopt `matrix:`, the bidirectional and pool-scoped behaviors below are already covered by the solver and you do not need this fork.
 
-llama-swap includes a real time web interface with a playground for testing out all sorts of local models:
+The two scheduling tweaks in this fork modify only the legacy `groups:` codepath, which remains useful when a `groups:`-based configuration is preferred for its simplicity. The admin PIN lock is independent of the chosen scheduling path.
 
-<img width="1125" height="876" alt="image" src="https://github.com/user-attachments/assets/8ee41947-97af-463d-b0f0-8e9c478fac07" />
+## Fork changes at a glance
 
-View detailed token metrics:
+- Bidirectional group exclusivity (`groups:` path only): fixes the one-way exclusivity behavior so conflicting groups unload each other consistently. Related upstream discussion: [issue #215](https://github.com/mostlygeek/llama-swap/issues/215), [PR #631](https://github.com/mostlygeek/llama-swap/pull/631)
+- Pool-scoped group exclusivity (`groups:` path only): adds an optional `pool` field so exclusivity applies within a named resource boundary instead of always globally. Related upstream discussion: [issue #632](https://github.com/mostlygeek/llama-swap/issues/632)
+- Admin PIN lock for Activity captures: adds an optional `adminPin` setting and a UI unlock flow so sensitive capture data in the Activity panel is not immediately visible to all UI users. Related upstream discussion: [discussion #640](https://github.com/mostlygeek/llama-swap/discussions/640)
 
-<img width="1111" height="515" alt="image" src="https://github.com/user-attachments/assets/64bfb280-d7a3-4126-971a-a128fd40410c" />
+## Change details
 
-Inspect request and responses:
+### 1. Bidirectional group exclusivity
 
-<img width="1111" height="720" alt="image" src="https://github.com/user-attachments/assets/24fe4aca-1448-4d7c-b9e8-a967589bda6c" />
+Applies only to configurations that use the legacy `groups:` block. Configurations that use `matrix:` already get equivalent behavior from the upstream solver.
 
-Manually load and unload models:
+Upstream group exclusivity was effectively one-way in some cases.
+An exclusive group could evict other groups when it loaded, but loading a non-exclusive group did not always evict a conflicting exclusive group that was already running.
 
-<img width="1109" height="719" alt="image" src="https://github.com/user-attachments/assets/02b1e1f2-abd0-4050-84ae-facd66ff01c4" />
+This fork makes the behavior symmetric:
 
-Real time log streaming:
+- loading an exclusive group unloads conflicting non-persistent groups
+- loading a non-exclusive group unloads conflicting exclusive non-persistent groups
+- `persistent: true` still protects a group from being evicted
 
-<img width="1107" height="559" alt="image" src="https://github.com/user-attachments/assets/39669a10-cff2-409e-836a-5bad8bd0140c" />
+This matters when you use groups to model mutually exclusive workloads such as a large model and a smaller fallback model that share the same underlying resource.
 
-## Installation
-
-llama-swap can be installed in multiple ways
-
-1. Docker
-2. Homebrew (OSX and Linux)
-3. WinGet
-4. From release binaries
-5. From source
-
-### Docker Install ([download images](https://github.com/mostlygeek/llama-swap/pkgs/container/llama-swap))
-
-Nightly container images with llama-swap and llama-server are built for multiple platforms (cuda, vulkan, intel, etc.) including [non-root variants with improved security](docs/container-security.md).
-The stable-diffusion.cpp server is also included for the musa and vulkan platforms.
-
-```shell
-$ docker pull ghcr.io/mostlygeek/llama-swap:cuda
-
-# run with a custom configuration and models directory
-$ docker run -it --rm --runtime nvidia -p 9292:8080 \
- -v /path/to/models:/models \
- -v /path/to/custom/config.yaml:/app/config.yaml \
- ghcr.io/mostlygeek/llama-swap:cuda
-
-# configuration hot reload supported with a
-# directory volume mount
-$ docker run -it --rm --runtime nvidia -p 9292:8080 \
- -v /path/to/models:/models \
- -v /path/to/custom/config.yaml:/app/config.yaml \
- -v /path/to/config:/config \
- ghcr.io/mostlygeek/llama-swap:cuda -config /config/config.yaml -watch-config
-```
-
-<details>
-<summary>
-more examples
-</summary>
-
-```shell
-# pull latest images per platform
-docker pull ghcr.io/mostlygeek/llama-swap:cpu
-docker pull ghcr.io/mostlygeek/llama-swap:cuda
-docker pull ghcr.io/mostlygeek/llama-swap:vulkan
-docker pull ghcr.io/mostlygeek/llama-swap:intel
-docker pull ghcr.io/mostlygeek/llama-swap:musa
-
-# tagged llama-swap, platform and llama-server version images
-docker pull ghcr.io/mostlygeek/llama-swap:v166-cuda-b6795
-
-# non-root cuda
-docker pull ghcr.io/mostlygeek/llama-swap:cuda-non-root
-
-```
-
-</details>
-
-### Homebrew Install (macOS/Linux)
-
-```shell
-brew tap mostlygeek/llama-swap
-brew install llama-swap
-llama-swap --config path/to/config.yaml --listen localhost:8080
-```
-
-### WinGet Install (Windows)
-
-> [!NOTE]
-> WinGet is maintained by community contributor [Dvd-Znf](https://github.com/Dvd-Znf) ([#327](https://github.com/mostlygeek/llama-swap/issues/327)). It is not an official part of llama-swap.
-
-```shell
-# install
-C:\> winget install llama-swap
-
-# upgrade
-C:\> winget upgrade llama-swap
-```
-
-### Pre-built Binaries
-
-Binaries are available on the [release](https://github.com/mostlygeek/llama-swap/releases) page for Linux, Mac, Windows and FreeBSD.
-
-### Building from source
-
-1. Building requires Go and Node.js (for UI).
-1. `git clone https://github.com/mostlygeek/llama-swap.git`
-1. `make clean all`
-1. look in the `build/` subdirectory for the llama-swap binary
-
-## Configuration
+Example:
 
 ```yaml
-# minimum viable config.yaml
+groups:
+  big-model:
+    exclusive: true
+    members: [qwen-72b]
 
-models:
-  model1:
-    cmd: llama-server --port ${PORT} --model /path/to/model.gguf
+  small-model:
+    exclusive: false
+    members: [qwen-7b]
 ```
 
-That's all you need to get started:
+In this fork, if `qwen-72b` is running and `qwen-7b` is requested, the exclusive group is unloaded first instead of being left behind due to one-way handling.
 
-1. `models` - holds all model configurations
-2. `model1` - the ID used in API calls
-3. `cmd` - the command to run to start the server.
-4. `${PORT}` - an automatically assigned port number
+### 2. Pool-scoped group exclusivity
 
-Almost all configuration settings are optional and can be added one step at a time:
+Applies only to configurations that use the legacy `groups:` block. Configurations that use `matrix:` express resource boundaries through the solver's sets and `evict_costs` instead.
 
-- Advanced features
-  - `matrix` to run concurrent models with a custom swap logic DSL
-  - `hooks` to run things on startup
-  - `macros` reusable snippets
-- Model customization
-  - `ttl` to automatically unload models
-  - `aliases` to use familiar model names (e.g., "gpt-4o-mini")
-  - `env` to pass custom environment variables to inference servers
-  - `cmdStop` gracefully stop Docker/Podman containers
-  - `useModelName` to override model names sent to upstream servers
-  - `${PORT}` automatic port variables for dynamic port assignment
-  - `filters` rewrite parts of requests before sending to the upstream server
+This fork adds an optional `pool` field to group configuration:
 
-See the [configuration documentation](docs/configuration.md) for all options.
+```yaml
+groups:
+  gpu0-large:
+    exclusive: true
+    pool: GPU-0
+    members: [model-a]
 
-## How does llama-swap work?
+  gpu0-small:
+    exclusive: false
+    pool: GPU-0
+    members: [model-b]
 
-When a request is made to an OpenAI compatible endpoint, llama-swap will extract the `model` value and load the appropriate server configuration to serve it. If the wrong upstream server is running, it will be replaced with the correct one. This is where the "swap" part comes in. The upstream server is automatically swapped to handle the request correctly.
-
-In the most basic configuration llama-swap handles one model at a time. For more advanced use cases, using a `matrix` allows multiple models to be loaded at the same time. You have complete control over how your system resources are used.
-
-## Reverse Proxy Configuration (nginx)
-
-If you deploy llama-swap behind nginx, disable response buffering for streaming endpoints. By default, nginx buffers responses which breaks Server‑Sent Events (SSE) and streaming chat completion. ([#236](https://github.com/mostlygeek/llama-swap/issues/236))
-
-Recommended nginx configuration snippets:
-
-```nginx
-# SSE for UI events/logs
-location /api/events {
-    proxy_pass http://your-llama-swap-backend;
-    proxy_buffering off;
-    proxy_cache off;
-}
-
-# Streaming chat completions (stream=true)
-location /v1/chat/completions {
-    proxy_pass http://your-llama-swap-backend;
-    proxy_buffering off;
-    proxy_cache off;
-}
+  gpu1-large:
+    exclusive: true
+    pool: GPU-1
+    members: [model-c]
 ```
 
-As a safeguard, llama-swap also sets `X-Accel-Buffering: no` on SSE responses. However, explicitly disabling `proxy_buffering` at your reverse proxy is still recommended for reliable streaming behavior.
+Behavior:
 
-## Monitoring Logs on the CLI
+- groups in the same named pool interact normally for exclusivity and eviction
+- groups in different named pools do not affect each other
+- a group with no `pool` is global and interacts with all pools
+- `persistent: true` still prevents eviction inside its pool
 
-```sh
-# sends up to the last 10KB of logs
-$ curl http://host/logs
+This is useful when you want exclusivity to reflect a real hardware or scheduling boundary.
 
-# streams combined logs
-curl -Ns http://host/logs/stream
+In the example above:
 
-# stream llama-swap's proxy status logs
-curl -Ns http://host/logs/stream/proxy
+- `gpu0-large` and `gpu0-small` can evict each other according to exclusivity rules because both are in `GPU-0`
+- `gpu1-large` is isolated from the `GPU-0` groups because it uses a different pool
+- a group with no `pool` would still be treated as global and could interact with both `GPU-0` and `GPU-1`
 
-# stream logs from upstream processes that llama-swap loads
-curl -Ns http://host/logs/stream/upstream
+### 3. Admin PIN lock for Activity captures
 
-# stream logs only from a specific model
-curl -Ns http://host/logs/stream/{model_id}
+This fork adds an optional `adminPin` top-level configuration setting for deployments where the UI is broadly accessible, but request and response capture data should remain restricted.
 
-# stream and filter logs with linux pipes
-curl -Ns http://host/logs/stream | grep 'eval time'
+Example:
 
-# appending ?no-history will disable sending buffered history first
-curl -Ns 'http://host/logs/stream?no-history'
+```yaml
+adminPin: "1234"
 ```
 
-## Do I need to use llama.cpp's server (llama-server)?
+Behavior:
 
-Any OpenAI compatible server would work. llama-swap was originally designed for llama-server and it is the best supported.
+- if `adminPin` is not configured, the UI behaves like upstream
+- if `adminPin` is configured, the UI exposes an unlock action
+- viewing captured Activity request/response bodies requires a successful PIN verification
+- the unlocked state is stored only in the current browser session and resets when the tab/session ends
 
-For Python based inference servers like vllm or tabbyAPI it is recommended to run them via podman or docker. This provides clean environment isolation as well as responding correctly to `SIGTERM` signals for proper shutdown.
+This is meant as a lightweight privacy control for shared internal deployments where users may need access to the general UI, model list, or status views, but should not automatically see other users' captured prompts and responses.
 
-## Star History
+Current scope:
 
-> [!NOTE]
-> ⭐️ Star this project to help others discover it!
+- Activity metrics remain visible
+- the protection applies to viewing capture contents from the Activity panel
+- this is not a full multi-user authentication or role-based access system
 
-[![Star History Chart](https://api.star-history.com/svg?repos=mostlygeek/llama-swap&type=Date)](https://www.star-history.com/#mostlygeek/llama-swap&Date)
+Warning:
+
+- this is not true security, only a UI-level barrier
+- the current implementation mainly disables the normal UI path for viewing capture details
+- the capture data is not independently protected by the PIN at the API level, so users with browser developer tools or direct API access can still retrieve it with minimal effort
+
+## Scope of this fork
+
+This fork intentionally keeps its public delta small. The two scheduling changes are confined to the legacy `groups:` codepath and do not touch upstream's `matrix:` solver. The admin PIN is a small, optional UI gate. The goal is to stay close to upstream while carrying a few targeted changes that are useful in deployments still based on `groups:`.
