@@ -45,8 +45,8 @@
       <p class="text-red-500 text-sm">Incorrect PIN</p>
     {/if}
     <div class="flex gap-2 justify-end">
-      <button type="button" onclick={() => (open = false)} class="btn btn--sm">Cancel</button>
-      <button type="submit" class="btn btn--sm" disabled={!pin}>Unlock</button>
+      <button type="button" onclick={() => (open = false)} class="btn">Cancel</button>
+      <button type="submit" class="btn" disabled={!pin}>Unlock</button>
     </div>
   </form>
 </dialog>
