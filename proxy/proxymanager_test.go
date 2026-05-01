@@ -238,6 +238,230 @@ groups:
 	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
 }
 
+// Exclusive groups in different pools must not affect each other.
+func TestProxyManager_PoolIsolation(t *testing.T) {
+	cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+  model2:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model2
+groups:
+  gpu0:
+    exclusive: true
+    pool: GPU-0
+    members:
+      - model1
+  gpu1:
+    exclusive: true
+    pool: GPU-1
+    members:
+      - model2
+`)
+
+	proxy := New(cfg)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	for _, requestedModel := range []string{"model1", "model2"} {
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, requestedModel)
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), requestedModel)
+	}
+
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+}
+
+// Within a single pool, bidirectional exclusivity still applies.
+func TestProxyManager_PoolExclusiveWithinPool(t *testing.T) {
+	cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+  model2:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model2
+  model3:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model3
+groups:
+  gpu0-big:
+    exclusive: true
+    pool: GPU-0
+    members:
+      - model1
+  gpu0-small:
+    exclusive: false
+    pool: GPU-0
+    members:
+      - model2
+  gpu1:
+    exclusive: true
+    pool: GPU-1
+    members:
+      - model3
+`)
+
+	proxy := New(cfg)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	for _, requestedModel := range []string{"model3", "model1", "model2"} {
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, requestedModel)
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateStopped)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+	assert.Equal(t, proxy.findGroupByModelName("model3").processes["model3"].CurrentState(), StateReady)
+}
+
+// Persistent groups remain protected within the same pool.
+func TestProxyManager_PoolPersistentWithinPool(t *testing.T) {
+	cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+  model2:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model2
+groups:
+  always-on:
+    exclusive: false
+    persistent: true
+    pool: GPU-0
+    members:
+      - model1
+  big-model:
+    exclusive: true
+    pool: GPU-0
+    members:
+      - model2
+`)
+
+	proxy := New(cfg)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	for _, requestedModel := range []string{"model1", "model2"} {
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, requestedModel)
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+}
+
+// A global exclusive group (no pool) evicts groups in named pools.
+func TestProxyManager_PoolGlobalEvictsAllPools(t *testing.T) {
+	cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+  model2:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model2
+  model3:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model3
+groups:
+  gpu0:
+    exclusive: true
+    pool: GPU-0
+    members:
+      - model1
+  gpu1:
+    exclusive: true
+    pool: GPU-1
+    members:
+      - model2
+  spanning:
+    exclusive: true
+    members:
+      - model3
+`)
+
+	proxy := New(cfg)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	for _, requestedModel := range []string{"model1", "model2"} {
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, requestedModel)
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+
+	reqBody := fmt.Sprintf(`{"model":"%s"}`, "model3")
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	w := CreateTestResponseRecorder()
+	proxy.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateStopped)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateStopped)
+	assert.Equal(t, proxy.findGroupByModelName("model3").processes["model3"].CurrentState(), StateReady)
+}
+
+// A named-pool group evicts a running global exclusive group.
+func TestProxyManager_PoolNamedEvictsGlobal(t *testing.T) {
+	cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+  model2:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model2
+groups:
+  spanning:
+    exclusive: true
+    members:
+      - model1
+  gpu0:
+    exclusive: false
+    pool: GPU-0
+    members:
+      - model2
+`)
+
+	proxy := New(cfg)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	reqBody := fmt.Sprintf(`{"model":"%s"}`, "model1")
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	w := CreateTestResponseRecorder()
+	proxy.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+
+	reqBody = fmt.Sprintf(`{"model":"%s"}`, "model2")
+	req = httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	w = CreateTestResponseRecorder()
+	proxy.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateStopped)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+}
+
 // When a request for a different model comes in ProxyManager should wait until
 // the first request is complete before swapping. Both requests should complete
 func TestProxyManager_SwapMultiProcessParallelRequests(t *testing.T) {
