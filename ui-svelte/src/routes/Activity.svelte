@@ -1,5 +1,6 @@
 <script lang="ts">
   import { metrics, getCapture } from "../stores/api";
+  import { isLocked } from "../stores/pin";
   import ActivityStats from "../components/ActivityStats.svelte";
   import Tooltip from "../components/Tooltip.svelte";
   import CaptureDialog from "../components/CaptureDialog.svelte";
@@ -278,7 +279,7 @@
                   {#if metric.has_capture}
                     <button
                       onclick={() => viewCapture(metric.id)}
-                      disabled={loadingCaptureId === metric.id}
+                      disabled={loadingCaptureId === metric.id || $isLocked}
                       class="btn btn--sm"
                     >
                       {loadingCaptureId === metric.id ? "..." : "View"}
