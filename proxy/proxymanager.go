@@ -564,6 +564,15 @@ func (pm *ProxyManager) swapProcessGroup(realModelName string) (*ProcessGroup, e
 				otherGroup.StopProcesses(StopWaitForInflightRequest)
 			}
 		}
+	} else {
+		// Bidirectional exclusivity: a non-exclusive group still evicts any running
+		// exclusive non-persistent groups. See issue #215.
+		for groupId, otherGroup := range pm.processGroups {
+			if groupId != processGroup.id && otherGroup.exclusive && !otherGroup.persistent {
+				pm.proxyLogger.Debugf("Unloading exclusive group %s for non-exclusive group %s", groupId, processGroup.id)
+				otherGroup.StopProcesses(StopWaitForInflightRequest)
+			}
+		}
 	}
 
 	return processGroup, nil

@@ -150,6 +150,94 @@ groups:
 	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
 }
 
+// Loading a model in a non-exclusive group should evict running exclusive
+// non-persistent groups. See issue #215.
+func TestProxyManager_ExclusiveGroupEvictedByNonExclusive(t *testing.T) {
+	cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+  model2:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model2
+groups:
+  G1:
+    swap: true
+    exclusive: true
+    members:
+      - model1
+  G2:
+    swap: true
+    exclusive: false
+    members:
+      - model2
+`)
+
+	proxy := New(cfg)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	// load model1 in the exclusive group
+	reqBody := fmt.Sprintf(`{"model":"%s"}`, "model1")
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	w := CreateTestResponseRecorder()
+	proxy.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+
+	// load model2 in the non-exclusive group, this should evict the exclusive group
+	reqBody = fmt.Sprintf(`{"model":"%s"}`, "model2")
+	req = httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	w = CreateTestResponseRecorder()
+	proxy.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateStopped)
+}
+
+// A persistent exclusive group must not be evicted when a non-exclusive group loads.
+func TestProxyManager_PersistentExclusiveGroupNotEvicted(t *testing.T) {
+	cfg := testConfigFromYAML(t, `
+healthCheckTimeout: 15
+logLevel: error
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+  model2:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model2
+groups:
+  G1:
+    swap: true
+    exclusive: true
+    persistent: true
+    members:
+      - model1
+  G2:
+    swap: true
+    exclusive: false
+    members:
+      - model2
+`)
+
+	proxy := New(cfg)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+
+	for _, requestedModel := range []string{"model1", "model2"} {
+		reqBody := fmt.Sprintf(`{"model":"%s"}`, requestedModel)
+		req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+		w := CreateTestResponseRecorder()
+
+		proxy.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), requestedModel)
+	}
+
+	// both should remain running since G1 is persistent
+	assert.Equal(t, proxy.findGroupByModelName("model1").processes["model1"].CurrentState(), StateReady)
+	assert.Equal(t, proxy.findGroupByModelName("model2").processes["model2"].CurrentState(), StateReady)
+}
+
 // When a request for a different model comes in ProxyManager should wait until
 // the first request is complete before swapping. Both requests should complete
 func TestProxyManager_SwapMultiProcessParallelRequests(t *testing.T) {
