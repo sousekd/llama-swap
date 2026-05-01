@@ -339,10 +339,15 @@
                             "type": "string"
                         },
                         "description": "Array of model IDs that are members of this group. Model IDs must be defined in models."
+                    },
+                    "pool": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Optional pool name. Groups in the same pool affect each other for exclusivity and eviction. Groups in different named pools are independent. Groups without a pool are global and interact with every pool."
                     }
                 }
             },
-            "description": "A dictionary of group settings. Provides advanced controls over model swapping behaviour. Model IDs must be defined in models. A model can only be a member of one group. Behaviour controlled via swap, exclusive, persistent."
+            "description": "A dictionary of group settings. Provides advanced controls over model swapping behaviour. Model IDs must be defined in models. A model can only be a member of one group. Behaviour controlled via swap, exclusive, persistent, pool."
         },
         "profiles": {
             "type": "object",

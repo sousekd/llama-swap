@@ -597,6 +597,13 @@ func (pm *ProxyManager) Shutdown() {
 	pm.shutdownCancel()
 }
 
+// poolsInteract returns true if two pools can affect each other.
+// An empty pool is "global" and interacts with every pool. Named pools only
+// interact with the same name or with the global pool. See issue #632.
+func poolsInteract(a, b string) bool {
+	return a == "" || b == "" || a == b
+}
+
 func (pm *ProxyManager) swapProcessGroup(realModelName string) (*ProcessGroup, error) {
 	processGroup := pm.findGroupByModelName(realModelName)
 	if processGroup == nil {
@@ -606,7 +613,7 @@ func (pm *ProxyManager) swapProcessGroup(realModelName string) (*ProcessGroup, e
 	if processGroup.exclusive {
 		pm.proxyLogger.Debugf("Exclusive mode for group %s, stopping other process groups", processGroup.id)
 		for groupId, otherGroup := range pm.processGroups {
-			if groupId != processGroup.id && !otherGroup.persistent {
+			if groupId != processGroup.id && !otherGroup.persistent && poolsInteract(processGroup.pool, otherGroup.pool) {
 				otherGroup.StopProcesses(StopWaitForInflightRequest)
 			}
 		}
@@ -614,7 +621,7 @@ func (pm *ProxyManager) swapProcessGroup(realModelName string) (*ProcessGroup, e
 		// Bidirectional exclusivity: a non-exclusive group still evicts any running
 		// exclusive non-persistent groups. See issue #215.
 		for groupId, otherGroup := range pm.processGroups {
-			if groupId != processGroup.id && otherGroup.exclusive && !otherGroup.persistent {
+			if groupId != processGroup.id && otherGroup.exclusive && !otherGroup.persistent && poolsInteract(processGroup.pool, otherGroup.pool) {
 				pm.proxyLogger.Debugf("Unloading exclusive group %s for non-exclusive group %s", groupId, processGroup.id)
 				otherGroup.StopProcesses(StopWaitForInflightRequest)
 			}
