@@ -365,3 +365,12 @@ This environment has a few quirks worth knowing:
   ```
 - `.dev/` contains private helper scripts (`check-go-format.ps1`, `sync-main.ps1`, etc.) and reference diffs of the fork commits. They are not part of the public workflow but are useful when debugging a sync on this machine.
 - VS Code's integrated terminal is PowerShell by default; chain with `;` rather than `&&`, and prefer pipelines over `xargs`.
+
+## Lessons learned
+
+Concise pattern notes from past syncs. Add new entries here when a sync teaches something non-obvious; do not rewrite history.
+
+- **README "wholesale replace" conflicts.** Some fork commits exist solely to *replace* an upstream file (e.g. the fork `README.md`). When git reports conflicts, do not hand-merge upstream's new sections in — resolve with `git checkout <fork-commit-sha> -- <file>` to take the fork version verbatim, then `git cherry-pick --continue`. The whole point of those commits is that they overwrite, not merge.
+- **Classifying new upstream surfaces vs fork access controls.** When upstream adds a new observability/admin surface (Prometheus `/metrics`, performance dashboard, debug endpoints), explicitly decide whether each fork-introduced gate (e.g. admin PIN) extends to it. The default for this fork is *no extension*: PIN protects only the Activity capture bodies; new upstream surfaces stay exposed unless the maintainer says otherwise. Capture the decision in the README in the same sync.
+- **Tag count is absolute, not per-sync.** `vNNN-plus-N` uses `N = git rev-list --count <latest-tag>..upstream/main` measured at sync time, not the count of commits absorbed *this* sync. If `main` was already ahead of the latest upstream tag, `N` will exceed the visible delta and that is correct.
+- **PR auto-merge after promotion is fine.** When `release/staging` is force-pushed to the same SHA as the integration branch's tip and the integration branch is deleted, GitHub marks the open PR as `MERGED` automatically. The traceability artefact survives in PR history, which is exactly what we want; no manual PR close is needed.
