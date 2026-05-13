@@ -51,6 +51,16 @@ Do not assume the file footprint of a feature is stable across upstream versions
 - **`release/stable` is never auto-promoted.** Promotion is a separate, explicit decision by the maintainer.
 - **No unrelated refactors during a sync.** Minimal, tightly-scoped changes only.
 
+### Upstreamable patches
+
+Some fork commits are intended to be proposed upstream later. Treat these differently from private fork-only changes:
+
+- Write the commit in upstream style (`area: summary`) without fork-internal wording.
+- Keep the commit focused and self-contained so it can be cherry-picked cleanly onto a `pr/<name>` branch off `main`.
+- Avoid private references in the commit body (`fixes #` to private trackers, internal-only links, or release notes).
+- Keep documenting the change in this fork's `README.md`, but mark it as "intended to be upstreamed".
+- On a future sync, if upstream already includes it, handle it as an obsoleted fork feature: skip replay and remove the fork README entry in the same sync.
+
 ### Known noise that is not your problem
 
 Before the sync, capture a baseline of pre-existing warnings on `release/staging`:
@@ -374,3 +384,4 @@ Concise pattern notes from past syncs. Add new entries here when a sync teaches 
 - **Classifying new upstream surfaces vs fork access controls.** When upstream adds a new observability/admin surface (Prometheus `/metrics`, performance dashboard, debug endpoints), explicitly decide whether each fork-introduced gate (e.g. admin PIN) extends to it. The default for this fork is *no extension*: PIN protects only the Activity capture bodies; new upstream surfaces stay exposed unless the maintainer says otherwise. Capture the decision in the README in the same sync.
 - **Tag count is absolute, not per-sync.** `vNNN-plus-N` uses `N = git rev-list --count <latest-tag>..upstream/main` measured at sync time, not the count of commits absorbed *this* sync. If `main` was already ahead of the latest upstream tag, `N` will exceed the visible delta and that is correct.
 - **PR auto-merge after promotion is fine.** When `release/staging` is force-pushed to the same SHA as the integration branch's tip and the integration branch is deleted, GitHub marks the open PR as `MERGED` automatically. The traceability artefact survives in PR history, which is exactly what we want; no manual PR close is needed.
+- **Upstreamable fix commits need clean extraction points.** If a sync includes a patch we plan to PR upstream, keep it as a small code-only commit with an upstream-style message, then keep docs/README updates in a separate commit. This preserves a clean cherry-pick target for a later `pr/...` branch.
