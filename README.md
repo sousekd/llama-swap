@@ -19,7 +19,6 @@ The two scheduling tweaks in this fork modify only the legacy `groups:` codepath
 - Bidirectional group exclusivity (`groups:` path only): fixes the one-way exclusivity behavior so conflicting groups unload each other consistently. Related upstream discussion: [issue #215](https://github.com/mostlygeek/llama-swap/issues/215), [PR #631](https://github.com/mostlygeek/llama-swap/pull/631)
 - Pool-scoped group exclusivity (`groups:` path only): adds an optional `pool` field so exclusivity applies within a named resource boundary instead of always globally. Related upstream discussion: [issue #632](https://github.com/mostlygeek/llama-swap/issues/632)
 - Admin PIN lock for Activity captures: adds an optional `adminPin` setting and a UI unlock flow so sensitive capture data in the Activity panel is not immediately visible to all UI users. Related upstream discussion: [discussion #640](https://github.com/mostlygeek/llama-swap/discussions/640)
-- LACT zero-VRAM GPU filter: ignores LACT-reported devices with `mem_total_mb=0` so non-compute VM display adapters do not appear in performance monitoring output.
 
 ## Change details
 
@@ -124,14 +123,6 @@ Warning:
 - the current implementation mainly disables the normal UI path for viewing capture details
 - the capture data is not independently protected by the PIN at the API level, so users with browser developer tools or direct API access can still retrieve it with minimal effort
 
-### 4. LACT zero-VRAM GPU filter
-
-When GPU monitoring uses LACT, this fork skips devices that report `mem_total_mb=0`.
-
-This removes non-compute VM display adapters from `/api/performance` and Prometheus `/metrics` without changing behavior for real GPUs that report VRAM.
-
-The change is intentionally small and self-contained.
-
 ## Scope of this fork
 
-This fork intentionally keeps its public delta small. The two scheduling changes are confined to the legacy `groups:` codepath and do not touch upstream's `matrix:` solver. The admin PIN is a small, optional UI gate. The LACT filter is a small monitoring hygiene tweak. The goal is to stay close to upstream while carrying a few targeted changes that are useful in deployments still based on `groups:`.
+This fork intentionally keeps its public delta small. The two scheduling changes are confined to the legacy `groups:` codepath and do not touch upstream's `matrix:` solver. The admin PIN is a small, optional UI gate. The goal is to stay close to upstream while carrying a few targeted changes that are useful in deployments still based on `groups:`.
