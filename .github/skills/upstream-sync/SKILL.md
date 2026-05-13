@@ -27,7 +27,7 @@ This skill assumes **zero prior context**. Read this section in full before touc
 | `release/staging` | Integration branch: `upstream/main` + the fork-only commits. Used for testing.                | Yes, with `--force-with-lease`.  |
 | `release/stable`  | Promoted, deployable state. Moves forward from `release/staging` only after explicit sign-off.| Yes, with `--force-with-lease`.  |
 
-Anything else (e.g. `sync/upstream-vNNN`, `pr/*`, `local/*`) is temporary scaffolding and should be deleted after the sync.
+Anything else (e.g. `sync/upstream-vNNN`, `open-pr/*`, `local/*`) is temporary scaffolding and should be deleted once its job is done. Keep `open-pr/*` branches only while the upstream PR is open. `pr/*` is a local tag namespace, not a branch namespace.
 
 ### Fork-only commits (the "delta")
 
@@ -66,6 +66,7 @@ Rules:
 - **Upstream voice is the default for code.** Even if you have no plan to upstream a particular patch, write it as if you might. The PIN feature is in-tree as a regular code commit with a body that names its known limitation; that is the model.
 - **`fork-docs:` is a hard signal.** A future sync agent skimming `git log` should be able to ignore everything `fork-docs:` when reasoning about what would land in an upstream PR.
 - **Tags are PR-prep markers, not category markers.** When you actually decide to prepare an upstream PR for a commit, add a local-only `pr/<short-name>` Git tag pointing at it. Most code commits will have no tag, and that's fine. `pr/*` tags are never pushed.
+- **Live upstream PR branches use `open-pr/`.** When you push a branch solely to open or update an upstream PR, name it `open-pr/<short-name>`. These branches are pushed to `origin`, kept alive while the PR is open, and deleted after the PR is merged or closed.
 - **One-off convention adoption** was performed at the `fork-pre-convention-adoption` annotated tag — metadata-only history rewrite, no working-tree change. Future syncs replay commits *with* the prefixes already in place.
 
 ### Workflow shapes
