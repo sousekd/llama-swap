@@ -50,16 +50,33 @@ Do not assume the file footprint of a feature is stable across upstream versions
 - **Force-pushing**: only ever `--force-with-lease`, never `--force`.
 - **`release/stable` is never auto-promoted.** Promotion is a separate, explicit decision by the maintainer.
 - **No unrelated refactors during a sync.** Minimal, tightly-scoped changes only.
+- **Never commit, push, or open a PR past a review checkpoint without explicit human approval.** See *Workflow shapes* below.
 
-### Upstreamable patches
+### Commit categories
 
-Some fork commits are intended to be proposed upstream later. Treat these differently from private fork-only changes:
+There are exactly two categories. The category lives on the commit subject so `git log --oneline` is self-classifying.
 
-- Write the commit in upstream style (`area: summary`) without fork-internal wording.
-- Keep the commit focused and self-contained so it can be cherry-picked cleanly onto a `pr/<name>` branch off `main`.
-- Avoid private references in the commit body (`fixes #` to private trackers, internal-only links, or release notes).
-- Keep documenting the change in this fork's `README.md`, but mark it as "intended to be upstreamed".
-- On a future sync, if upstream already includes it, handle it as an obsoleted fork feature: skip replay and remove the fork README entry in the same sync.
+| Category | Subject style | Used for |
+| --- | --- | --- |
+| Upstream-style code (default) | `area: summary` (e.g. `proxy: …`, `ui: …`, `perf: …`) | Every code change. Body is honest about limitations; no fork-internal references; no `fixes #` to private trackers. |
+| Fork-only docs/meta | `fork-docs: summary` | Fork README, this SKILL, sync notes, lessons learned, anything that only makes sense inside this fork. Free-form body. |
+
+Rules:
+
+- **Upstream voice is the default for code.** Even if you have no plan to upstream a particular patch, write it as if you might. The PIN feature is in-tree as a regular code commit with a body that names its known limitation; that is the model.
+- **`fork-docs:` is a hard signal.** A future sync agent skimming `git log` should be able to ignore everything `fork-docs:` when reasoning about what would land in an upstream PR.
+- **Tags are PR-prep markers, not category markers.** When you actually decide to prepare an upstream PR for a commit, add a local-only `pr/<short-name>` Git tag pointing at it. Most code commits will have no tag, and that's fine. `pr/*` tags are never pushed.
+- **One-off convention adoption** was performed at the `fork-pre-convention-adoption` annotated tag — metadata-only history rewrite, no working-tree change. Future syncs replay commits *with* the prefixes already in place.
+
+### Workflow shapes
+
+Each kind of work has its own shape, but both end at the same publish path and both have a mandatory review checkpoint where the agent stops and waits.
+
+- **Sync** — fetch upstream, fast-forward `main`, build integration branch, replay fork delta, validate. **Sync-review checkpoint** (see Phase 5.5). Then publish (Phase 6+).
+- **Feature** — edit working tree on `release/staging` (or a short-lived branch off it), validate. **Feature-review checkpoint** (see Phase 5.5 — same checkpoint, different surface). Then commit with the right category prefix and publish.
+- **Combined** (sync + small feature in one batch) — sync to integration branch, apply feature edits on top *uncommitted*, then a single review checkpoint covers both before commit/publish.
+
+At every checkpoint the agent: prints the relevant `git log`/`git diff`/`git status`/`git tag --list 'pr/*'` summary, optionally pushes the integration branch (no PR), and **stops**. It does not commit-finalize, does not open the traceability PR, does not force-push staging until the user explicitly says continue.
 
 ### Known noise that is not your problem
 
@@ -245,9 +262,37 @@ Think in terms of **categories of interaction**, not specific examples:
 - **UI duplication or inconsistency** — upstream added a UI control that conflicts visually or semantically with a fork-added one. Reconcile.
 - **Obsoleted feature** — upstream now solves what a fork commit solved. Skip the commit, document the change.
 
-If integration work is needed, add it as a **new, separately-named commit** on the integration branch (not as an amendment to a replayed fork commit). It becomes a new permanent member of the fork delta and will be replayed by future syncs.
+If integration work is needed, add it as a **new, separately-named commit** on the integration branch (not as an amendment to a replayed fork commit). It becomes a new permanent member of the fork delta and will be replayed by future syncs. New code commits use the upstream-style subject; new docs/notes commits use `fork-docs:`.
 
-Then update `README.md` so it accurately describes the post-sync state. Minimal edits only. The README is itself part of the fork delta and its replayed commit may need a small follow-up.
+Then update `README.md` so it accurately describes the post-sync state. Minimal edits only. The README is itself part of the fork delta and its replayed commit may need a small follow-up. Any README change here is a `fork-docs:` commit.
+
+### Phase 5.5 — Review checkpoint (mandatory pause)
+
+This is the explicit "hand control back to the human" point. The agent must reach this checkpoint with everything ready *but nothing finalized*:
+
+- Replay/feature commits exist on the integration branch (or, for a Feature flow that didn't rebase, are present in the working tree uncommitted).
+- All validation from Phase 4 is green.
+- README/SKILL edits, if any, are committed on the integration branch with `fork-docs:` prefix; one-line follow-up tweaks may instead be left uncommitted in the working tree, the user's choice.
+- Optionally `git push -u origin sync/upstream-vNNN` so the user can review the diff in the GitHub UI. Do **not** open the traceability PR yet.
+
+The agent prints:
+
+```bash
+git log --oneline main..HEAD
+git diff --stat main..HEAD
+git status --short --branch
+git tag --list 'pr/*'
+```
+
+plus a one-paragraph summary of *what changed and why*, then **stops and waits for the user to type continue (or to ask for revisions)**. The agent does not:
+
+- commit-finalize anything left uncommitted,
+- reset `release/staging`,
+- open the traceability PR,
+- force-push,
+- push any tag.
+
+For a Feature flow with no Sync, the same checkpoint applies — the surface is `git status -sb` + `git diff` rather than `git log main..HEAD`, but the rule is identical: stop, summarize, wait.
 
 ### Phase 6 — Promote `release/staging`
 
@@ -306,9 +351,13 @@ git remote prune origin
 
 **Never** delete or rename anything under `refs/remotes/upstream/`. **Never** delete `fork-pre-*` tags created by previous syncs.
 
-### Phase 9 — Traceability PR (mandatory)
+### Phase 9 — Traceability PR
 
-Open a fork-internal PR from the integration branch into `release/staging` *before* the Phase 6 reset. This is **standard practice for every sync**, not optional. The PR is the permanent, reviewable record of:
+Open a fork-internal PR from the integration branch into `release/staging` *after* the Phase 5.5 review checkpoint and *before* the Phase 6 reset. This is **standard practice for sync runs and feature work that introduces or changes code**.
+
+It is **not required** for changes that are purely fork-only metadata (e.g. a `fork-docs:` README tweak, a SKILL edit, a Lessons-learned addition) and produce no functional delta. A reasonable rule of thumb: if `git diff main..HEAD -- ':!.github/skills' ':!README.md'` is empty *and* every commit in the range is `fork-docs:`-prefixed, skip the PR.
+
+The PR is the permanent, reviewable record of:
 
 - which upstream commits were absorbed,
 - how each fork commit was reapplied (verbatim, conflict-resolved, or rewritten),
@@ -330,14 +379,15 @@ Self-approval is blocked on GitHub, so the PR is for visibility, not gating. Clo
 3. Capture a baseline of pre-existing `gofmt`/`staticcheck` output on `release/staging`.
 4. Tag: `git tag -a fork-pre-vNNN release/staging -m '...' && git push origin fork-pre-vNNN`.
 5. Fast-forward `main` to `upstream/main`, push.
-6. Branch `sync/upstream-vNNN` from `main`. Cherry-pick `main..release/staging` commits in oldest-first order. Derive focused tests from each commit's diff and run them after each pick. Treat conflicts as features and file renames as relocations.
+6. Branch `sync/upstream-vNNN` from `main`. Cherry-pick `main..release/staging` commits in oldest-first order. Derive focused tests from each commit's diff and run them after each pick. Treat conflicts as features and file renames as relocations. Replay preserves prefixes (`fork-docs:` stays `fork-docs:`); never demote a code commit to `fork-docs:` and never promote a doc commit to upstream voice.
 7. Sanity-check: replayed commit subjects equal the `fork-pre-vNNN..` subject list captured before the sync.
 8. Run `go mod tidy` and `npm ci` if upstream changed deps. Run the full validation pass; only the pre-sync baseline warnings are allowed.
-9. Reconcile fork features with any new/changed upstream surface; add follow-up integration commits if needed.
-10. Update `README.md` only where reality changed.
-11. Reset `release/staging` to the integration branch and `--force-with-lease` push.
-12. Delete the temporary branch (local and remote). Leave the `fork-pre-vNNN` tag in place.
-13. Do not touch `release/stable` unless explicitly asked.
+9. Reconcile fork features with any new/changed upstream surface; add follow-up integration commits if needed (code uses upstream-style subject, docs use `fork-docs:`).
+10. Update `README.md` only where reality changed (`fork-docs:` commit).
+11. **Stop at the review checkpoint (Phase 5.5).** Print the log/diff summary and wait for explicit approval before doing anything in steps 12–14.
+12. Open the traceability PR (skip if the change is `fork-docs:`-only with no functional delta).
+13. Reset `release/staging` to the integration branch and `--force-with-lease` push. Delete the temporary branch (local and remote). Leave the `fork-pre-vNNN` tag in place. `pr/*` tags stay local-only.
+14. Do not touch `release/stable` unless explicitly asked.
 
 ## Environment-specific notes
 
@@ -385,3 +435,5 @@ Concise pattern notes from past syncs. Add new entries here when a sync teaches 
 - **Tag count is absolute, not per-sync.** `vNNN-plus-N` uses `N = git rev-list --count <latest-tag>..upstream/main` measured at sync time, not the count of commits absorbed *this* sync. If `main` was already ahead of the latest upstream tag, `N` will exceed the visible delta and that is correct.
 - **PR auto-merge after promotion is fine.** When `release/staging` is force-pushed to the same SHA as the integration branch's tip and the integration branch is deleted, GitHub marks the open PR as `MERGED` automatically. The traceability artefact survives in PR history, which is exactly what we want; no manual PR close is needed.
 - **Upstreamable fix commits need clean extraction points.** If a sync includes a patch we plan to PR upstream, keep it as a small code-only commit with an upstream-style message, then keep docs/README updates in a separate commit. This preserves a clean cherry-pick target for a later `pr/...` branch.
+- **Two categories, no draft tier.** Every code commit is upstream-voice by default; fork-only docs use `fork-docs:`. A previous attempt to introduce a `pr-draft/` tag tier was dropped — "is this PR-ready *enough*?" was a fuzzy judgement and the limitation belongs in the commit body, not in a tag namespace. Tags are PR-prep markers applied at extraction time.
+- **Mandatory review checkpoint.** The agent stops at Phase 5.5 with everything ready but nothing finalized — no commit-finalize of uncommitted edits, no traceability PR, no force-push, no tag push. The user reviews and explicitly says continue. This applies to syncs and to standalone feature work alike.
