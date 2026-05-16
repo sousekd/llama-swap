@@ -77,7 +77,7 @@ Each kind of work has its own shape, but both end at the same publish path and b
 
 - **Sync** — fetch upstream, fast-forward `main`, build integration branch, replay fork delta, validate. **Sync-review checkpoint** (see Phase 5.5). Then publish (Phase 6+).
 - **Fork-only feature** — edit working tree on `release/staging` (or a short-lived branch off it), validate. **Feature-review checkpoint** (see Phase 5.5 — same checkpoint, different surface). Then commit with the right category prefix and publish.
-- **Upstream-candidate feature** — create `candidate/<short-name>` from `main`, implement and validate the feature there, then stop at the **Feature-review checkpoint**. For fork testing, create `test/<short-name>` from the candidate branch and replay the current fork delta on top. If the feature is later submitted upstream, create/update `open-pr/<short-name>` from the candidate branch. If upstream merges it, advance `main` and replay only the remaining fork delta into `release/staging`; do not keep a duplicate fork commit for the merged feature.
+- **Upstream-candidate feature** — create `candidate/<short-name>` from `main`, implement and validate the feature there, then stop at the **Feature-review checkpoint**. For fork testing, create `test/<short-name>` from the candidate branch and replay the current fork delta on top, smoke-test, and promote `release/staging` to the tested tip. See *Upstream-candidate feature workflow* below for the full mechanics (iteration via `rebase --onto`, optional worktree isolation, promotion, cleanup). If the feature is later submitted upstream, create/update `open-pr/<short-name>` from the candidate branch. If upstream merges it, advance `main` and replay only the remaining fork delta into `release/staging`; do not keep a duplicate fork commit for the merged feature. If the change is rejected upstream or never submitted, document it in the fork `README.md` before deleting the candidate branch.
 - **Combined** (sync + small feature in one batch) — sync to integration branch, apply feature edits on top *uncommitted*, then a single review checkpoint covers both before commit/publish.
 
 At every checkpoint the agent: prints the relevant `git log`/`git diff`/`git status`/`git tag --list 'pr/*'` summary, optionally pushes the integration branch (no PR), and **stops**. It does not commit-finalize, does not open the traceability PR, does not force-push staging until the user explicitly says continue.
@@ -376,6 +376,99 @@ gh pr create --base release/staging --head "sync/upstream-$TAG" \
 
 Self-approval is blocked on GitHub, so the PR is for visibility, not gating. Closing it via the Phase 6 reset is normal and expected; the PR survives in the repo's PR history as the audit trail.
 
+## Upstream-candidate feature workflow
+
+For changes that *might* be proposed upstream, do the development work on a clean candidate branch and integrate-test it against the fork delta on a separate branch. This keeps the upstream-submittable commits free of fork-only context while still proving the change works in the fork's real environment.
+
+> **Mental model.** `candidate/<name>` is what you would send upstream; `test/<name>` is candidate plus the current fork delta, used purely to smoke-test the change inside the fork. `release/staging` is promoted to the tested `test/<name>` tip after the smoke pass.
+
+This workflow is for tightly-scoped features that may be upstreamable. For broad upstream re-bases, use the sync phases above instead.
+
+### Phase C0 — Set up the two branches
+
+```bash
+git fetch origin --prune
+git fetch upstream --prune
+
+# Upstream-clean development branch, based on upstream/main (mirrored by local main).
+git checkout -b candidate/<name> main
+# implement and commit the feature here using upstream-voice subjects (area: summary)
+git push -u origin candidate/<name>
+```
+
+Then build the test branch by replaying the current fork delta on top. Doing this in a separate worktree keeps iteration on `candidate/<name>` (in the main worktree) decoupled from the test branch's `node_modules`, editor state, and validation runs:
+
+```bash
+git worktree add ../llama-swap-test-<name> -b test/<name> candidate/<name>
+cd ../llama-swap-test-<name>
+
+# Replay the entire current fork delta (main..release/staging) onto candidate/<name>.
+# Use rebase --onto when the delta is known to apply cleanly:
+git rebase --onto candidate/<name> main release/staging
+# Or cherry-pick one commit at a time (validate after each) when conflicts are likely.
+
+git push -u origin test/<name>
+```
+
+The separate worktree is a convenience, not a requirement. Without it, the same workflow requires a `git checkout` between every candidate edit and every test validation, which breaks editor state.
+
+### Phase C1 — Iterate
+
+All feature work happens on `candidate/<name>` in the main worktree:
+
+- **Prefer amending trivial follow-ups** (whitespace, single-line fixes, polish, message tweaks) into the existing candidate commit. Stacking three "tweak" commits before the PR is opened is noise the eventual upstream PR has to apologize for.
+- After amending (or adding a real new commit), push with `--force-with-lease`:
+  ```bash
+  git push --force-with-lease origin candidate/<name>
+  ```
+- **Save the previous candidate tip SHA before amending** (`git rev-parse HEAD` into a shell variable, or `git reflog` after the fact). The next step needs it.
+
+Then bring the test branch forward in the test worktree:
+
+```bash
+cd ../llama-swap-test-<name>
+git fetch origin --prune
+git rebase --onto candidate/<name> "$OLD_CANDIDATE_TIP" test/<name>
+# validate: npm run check && npm test && npm run build, plus any focused Go tests
+git push --force-with-lease origin test/<name>
+```
+
+If validation fails on the rebased test branch but the candidate itself is correct, the problem is the fork delta's interaction with the candidate. Fix it as a **new fork-delta commit on `test/<name>`** (upstream-style subject if the fix could itself be upstreamed, `fork-docs:` if it is documentation). Do not push the fix into the candidate commits unless it is genuinely part of what would ship upstream.
+
+### Phase C2 — Promote to `release/staging`
+
+After `test/<name>` smoke-tests cleanly (the maintainer runs it locally or against a real workload — `npm run build` green is not the same thing), promote it. This can be done from any worktree on any branch:
+
+```bash
+git fetch origin --prune
+git branch -f release/staging origin/test/<name>
+git push --force-with-lease origin release/staging
+git branch --set-upstream-to=origin/release/staging release/staging
+```
+
+The final `set-upstream-to` is mandatory — `git branch -f` silently retargets the local branch's upstream to whatever ref you forced it from (`origin/test/<name>`), which then makes routine `git pull`/`git status` reports wrong. Restore it immediately.
+
+No `fork-pre-vNNN` tag is required for candidate promotions: the flow is for small, scoped changes and `release/staging`'s reflog is sufficient as a rollback point. Reach for an annotated `fork-pre-*` tag only if the promotion happens to bundle a large reshape (in which case use the sync flow instead).
+
+A traceability PR is **not** required for a candidate promotion — the candidate branch already lives on `origin` as the reviewable artifact, and `test/<name>` is throwaway scaffolding. The PR rule from Phase 9 still applies to sync runs.
+
+### Phase C3 — Cleanup after smoke pass
+
+Once the maintainer confirms `release/staging` is healthy in real use:
+
+```bash
+git worktree remove ../llama-swap-test-<name>
+git branch -D test/<name>
+git push origin --delete test/<name>
+```
+
+**Keep `candidate/<name>` alive** as long as an upstream PR for it is plausible — it is the clean cherry-pick target for `open-pr/<name>`. Delete it only after one of the following resolves:
+
+- **Upstream merged the candidate.** On the next sync, `main` advances to include the commit and the candidate is dropped from the fork delta automatically. Delete the candidate branch then.
+- **Upstream rejected the candidate, or the change will never be submitted.** Document the feature in the fork `README.md` (and/or a `fork-docs:` note) so future sync agents understand why it is fork-only, then delete the candidate branch — its commits already live on `release/staging` as the canonical record.
+
+Do not delete the candidate branch "because the test branch is gone". Those two branches have different lifetimes by design.
+
 ## Quick checklist (TL;DR)
 
 1. Working tree clean. Read `AGENTS.md` and the fork `README.md`. `git fetch upstream --prune --tags`.
@@ -441,3 +534,6 @@ Concise pattern notes from past syncs. Add new entries here when a sync teaches 
 - **Upstreamable fix commits need clean extraction points.** If a sync includes a patch we plan to PR upstream, keep it as a small code-only commit with an upstream-style message, then keep docs/README updates in a separate commit. This preserves a clean cherry-pick target for a later `open-pr/...` branch.
 - **Two categories, no draft tier.** Every code commit is upstream-voice by default; fork-only docs use `fork-docs:`. A previous attempt to introduce a `pr-draft/` tag tier was dropped — "is this PR-ready *enough*?" was a fuzzy judgement and the limitation belongs in the commit body, not in a tag namespace. Tags are PR-prep markers applied at extraction time.
 - **Mandatory review checkpoint.** The agent stops at Phase 5.5 with everything ready but nothing finalized — no commit-finalize of uncommitted edits, no traceability PR, no force-push, no tag push. The user reviews and explicitly says continue. This applies to syncs and to standalone feature work alike.
+- **`git branch -f` retargets upstream tracking silently.** Forcing `release/staging` to `origin/test/<name>` for a candidate promotion sets the local branch's upstream to `origin/test/<name>` as a side-effect, which then makes `git pull` and `git status` reports lie. Always run `git branch --set-upstream-to=origin/release/staging release/staging` immediately after the promotion push.
+- **Save the old candidate tip before amending.** When iterating on `candidate/<name>`, the next step (`git rebase --onto candidate/<name> <old-tip> test/<name>`) needs the pre-amend SHA. Capture it into a shell variable before the amend; pulling it from `git reflog` mid-flow works but is fiddly.
+- **Separate worktree for the test branch.** When actively iterating on a candidate branch while validating the test integration, `git worktree add` for `test/<name>` removes constant branch switching, keeps `node_modules` consistent for the validation worktree, and lets the main worktree stay focused on the upstream-clean commits.
