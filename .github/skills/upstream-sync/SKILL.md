@@ -27,7 +27,7 @@ This skill assumes **zero prior context**. Read this section in full before touc
 | `release/staging` | Integration branch: `upstream/main` + the fork-only commits. Used for testing.                | Yes, with `--force-with-lease`.  |
 | `release/stable`  | Promoted, deployable state. Moves forward from `release/staging` only after explicit sign-off.| Yes, with `--force-with-lease`.  |
 
-Anything else (e.g. `sync/upstream-vNNN`, `open-pr/*`, `local/*`) is temporary scaffolding and should be deleted once its job is done. Keep `open-pr/*` branches only while the upstream PR is open. `pr/*` is a local tag namespace, not a branch namespace.
+Anything else (e.g. `sync/upstream-vNNN`, `candidate/*`, `test/*`, `open-pr/*`, `local/*`) is temporary scaffolding and should be deleted once its job is done. Keep `open-pr/*` branches only while the upstream PR is open. `pr/*` is a local tag namespace, not a branch namespace.
 
 ### Fork-only commits (the "delta")
 
@@ -66,7 +66,9 @@ Rules:
 - **Upstream voice is the default for code.** Even if you have no plan to upstream a particular patch, write it as if you might. The PIN feature is in-tree as a regular code commit with a body that names its known limitation; that is the model.
 - **`fork-docs:` is a hard signal.** A future sync agent skimming `git log` should be able to ignore everything `fork-docs:` when reasoning about what would land in an upstream PR.
 - **Tags are PR-prep markers, not category markers.** When you actually decide to prepare an upstream PR for a commit, add a local-only `pr/<short-name>` Git tag pointing at it. Most code commits will have no tag, and that's fine. `pr/*` tags are never pushed.
-- **Live upstream PR branches use `open-pr/`.** When you push a branch solely to open or update an upstream PR, name it `open-pr/<short-name>`. These branches are pushed to `origin`, kept alive while the PR is open, and deleted after the PR is merged or closed.
+- **Upstream-candidate feature branches use `candidate/`.** When a feature may be proposed upstream, implement and commit it on a branch from `main` named `candidate/<short-name>`. The commit must stand on upstream alone before it is mixed with fork-only commits.
+- **Fork test branches use `test/`.** When an upstream-candidate feature needs real-world testing with the fork's full delta, create `test/<short-name>` from the candidate branch and replay the current fork delta on top of it. Push these branches to `origin` only for testing; do not open upstream PRs from them.
+- **Live upstream PR branches use `open-pr/`.** When you push a branch solely to open or update an upstream PR, name it `open-pr/<short-name>`. These branches start from `main` or from a reviewed `candidate/<short-name>` branch, never from `release/staging`, and contain only the upstream-submission commits. Keep them alive while the PR is open and delete them after the PR is merged or closed.
 - **One-off convention adoption** was performed at the `fork-pre-convention-adoption` annotated tag — metadata-only history rewrite, no working-tree change. Future syncs replay commits *with* the prefixes already in place.
 
 ### Workflow shapes
@@ -74,7 +76,8 @@ Rules:
 Each kind of work has its own shape, but both end at the same publish path and both have a mandatory review checkpoint where the agent stops and waits.
 
 - **Sync** — fetch upstream, fast-forward `main`, build integration branch, replay fork delta, validate. **Sync-review checkpoint** (see Phase 5.5). Then publish (Phase 6+).
-- **Feature** — edit working tree on `release/staging` (or a short-lived branch off it), validate. **Feature-review checkpoint** (see Phase 5.5 — same checkpoint, different surface). Then commit with the right category prefix and publish.
+- **Fork-only feature** — edit working tree on `release/staging` (or a short-lived branch off it), validate. **Feature-review checkpoint** (see Phase 5.5 — same checkpoint, different surface). Then commit with the right category prefix and publish.
+- **Upstream-candidate feature** — create `candidate/<short-name>` from `main`, implement and validate the feature there, then stop at the **Feature-review checkpoint**. For fork testing, create `test/<short-name>` from the candidate branch and replay the current fork delta on top. If the feature is later submitted upstream, create/update `open-pr/<short-name>` from the candidate branch. If upstream merges it, advance `main` and replay only the remaining fork delta into `release/staging`; do not keep a duplicate fork commit for the merged feature.
 - **Combined** (sync + small feature in one batch) — sync to integration branch, apply feature edits on top *uncommitted*, then a single review checkpoint covers both before commit/publish.
 
 At every checkpoint the agent: prints the relevant `git log`/`git diff`/`git status`/`git tag --list 'pr/*'` summary, optionally pushes the integration branch (no PR), and **stops**. It does not commit-finalize, does not open the traceability PR, does not force-push staging until the user explicitly says continue.
