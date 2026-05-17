@@ -183,31 +183,32 @@ type Config struct {
 	Peers PeerDictionaryConfig `yaml:"peers"`
 }
 
+// EffectiveRequestName applies active profile aliases without shadowing model IDs.
+func (c *Config) EffectiveRequestName(search string, profileAliases map[string]string) string {
+	if _, found := c.Models[search]; found {
+		return search
+	}
+	if target, ok := profileAliases[search]; ok {
+		return target
+	}
+	return search
+}
+
 func (c *Config) RealModelName(search string) (string, bool) {
 	return c.RealModelNameWithProfile(search, nil)
 }
 
-// RealModelNameWithProfile resolves search with profile aliases overriding static aliases.
+// RealModelNameWithProfile resolves search to a model ID with profile aliases applied.
 func (c *Config) RealModelNameWithProfile(search string, profileAliases map[string]string) (string, bool) {
-	if _, found := c.Models[search]; found {
-		return search, true
-	} else if profileAliases != nil {
-		if target, found := profileAliases[search]; found {
-			if target == "" {
-				return "", false
-			}
-			if _, found := c.Models[target]; !found {
-				return "", false
-			}
-			return target, true
-		}
-	}
-
-	if name, found := c.aliases[search]; found {
-		return name, found
-	} else {
+	effective := c.EffectiveRequestName(search, profileAliases)
+	if effective == "" {
 		return "", false
 	}
+	if _, found := c.Models[effective]; found {
+		return effective, true
+	}
+	name, found := c.aliases[effective]
+	return name, found
 }
 
 // EffectiveAliasesFor returns aliases that resolve to modelID under the profile overlay.
@@ -220,8 +221,11 @@ func (c *Config) EffectiveAliasesFor(modelID string, profileAliases map[string]s
 	seen := make(map[string]struct{}, len(static))
 	out := make([]string, 0, len(static))
 	for _, alias := range static {
-		if target, overridden := profileAliases[alias]; overridden && target != modelID {
-			continue
+		if target, overridden := profileAliases[alias]; overridden {
+			resolved, _ := c.RealModelName(target)
+			if resolved != modelID {
+				continue
+			}
 		}
 		if _, found := seen[alias]; found {
 			continue
@@ -232,7 +236,11 @@ func (c *Config) EffectiveAliasesFor(modelID string, profileAliases map[string]s
 
 	added := make([]string, 0)
 	for alias, target := range profileAliases {
-		if target != modelID {
+		if _, found := c.Models[alias]; found {
+			continue
+		}
+		resolved, _ := c.RealModelName(target)
+		if resolved != modelID {
 			continue
 		}
 		if _, found := seen[alias]; found {
@@ -339,6 +347,9 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		for alias := range profile.Aliases {
 			if alias == "" {
 				return Config{}, fmt.Errorf("profile %s: alias name cannot be empty", profileName)
+			}
+			if _, found := config.Models[alias]; found {
+				return Config{}, fmt.Errorf("profile %s: alias %q conflicts with model ID", profileName, alias)
 			}
 		}
 	}
@@ -540,6 +551,22 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		}
 
 		config.Models[modelId] = modelConfig
+	}
+
+	// Validate profile alias targets after all aliases are registered.
+	for profileName, profile := range config.Profiles {
+		for alias, target := range profile.Aliases {
+			if target == "" {
+				continue
+			}
+			if _, ok := config.Models[target]; ok {
+				continue
+			}
+			if _, ok := config.aliases[target]; ok {
+				continue
+			}
+			return Config{}, fmt.Errorf("profile %s: alias %q target %q is not a known model or alias", profileName, alias, target)
+		}
 	}
 
 	// groups XOR matrix
