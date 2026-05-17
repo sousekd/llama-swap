@@ -72,16 +72,17 @@ models:
 
 llama-swap supports many more features to customize how you want to manage your environment.
 
-| Feature   | Description                                    |
-| --------- | ---------------------------------------------- |
-| `ttl`     | automatic unloading of models after a timeout  |
-| `macros`  | reusable snippets to use in configurations     |
-| `matrix`  | run multiple models at a time                  |
-| `hooks`   | event driven functionality                     |
-| `env`     | define environment variables per model         |
-| `aliases` | serve a model with different names             |
-| `filters` | modify requests before sending to the upstream |
-| `...`     | And many more tweaks                           |
+| Feature    | Description                                    |
+| ---------- | ---------------------------------------------- |
+| `ttl`      | automatic unloading of models after a timeout  |
+| `macros`   | reusable snippets to use in configurations     |
+| `matrix`   | run multiple models at a time                  |
+| `hooks`    | event driven functionality                     |
+| `env`      | define environment variables per model         |
+| `aliases`  | serve a model with different names             |
+| `profiles` | switch alias mappings at runtime               |
+| `filters`  | modify requests before sending to the upstream |
+| `...`      | And many more tweaks                           |
 
 ## Full Configuration Example
 
@@ -433,6 +434,25 @@ models:
     # - on Windows, calls taskkill to stop the process
     # - processes have 5 seconds to shutdown until forceful termination is attempted
     cmdStop: docker stop ${MODEL_ID}
+
+# profiles: runtime-switchable alias overlays
+# - optional, default: empty dictionary
+# - useful when clients use stable aliases like llm-assistant-smart
+# - switch profiles from the UI dropdown or POST /api/profiles/activate/<name>
+# - the selected profile is runtime state and does not persist across restarts
+# - use null (~) or an empty string to disable a local alias while the profile is active
+# profiles:
+#   balanced:
+#     description: "Use a mix of fast and capable local models"
+#     aliases:
+#       llm-assistant-fast: "docker-llama"
+#       llm-assistant-smart: "gpt-oss-120b"
+#       llm-code: "gpt-oss-120b"
+#   economy:
+#     description: "Prefer smaller models and disable expensive coding aliases"
+#     aliases:
+#       llm-assistant-smart: "docker-llama"
+#       llm-code: ~
 
 # =============================================================================
 # matrix: run concurrent models with a solver-based swap DSL

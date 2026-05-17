@@ -114,6 +114,115 @@ func TestConfig_FindConfig(t *testing.T) {
 	assert.Equal(t, ModelConfig{}, modelConfig)
 }
 
+func TestConfig_Profiles_Valid(t *testing.T) {
+	content := `
+models:
+  model1:
+    cmd: path/to/cmd --arg1 one
+    proxy: "http://localhost:8080"
+  model2:
+    cmd: path/to/cmd --arg1 one
+    proxy: "http://localhost:8081"
+profiles:
+  coding:
+    description: Coding profile
+    aliases:
+      assistant: model2
+      disabled: ~
+`
+	cfg, err := LoadConfigFromReader(strings.NewReader(content))
+	require.NoError(t, err)
+	require.Contains(t, cfg.Profiles, "coding")
+	assert.Equal(t, "Coding profile", cfg.Profiles["coding"].Description)
+	assert.Equal(t, "model2", cfg.Profiles["coding"].Aliases["assistant"])
+	assert.Equal(t, "", cfg.Profiles["coding"].Aliases["disabled"])
+}
+
+func TestConfig_Profiles_EmptyAliases(t *testing.T) {
+	content := `
+models:
+  model1:
+    cmd: path/to/cmd --arg1 one
+    proxy: "http://localhost:8080"
+profiles:
+  coding:
+    aliases: {}
+`
+	_, err := LoadConfigFromReader(strings.NewReader(content))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "profile coding: aliases map cannot be empty")
+}
+
+func TestConfig_Profiles_EmptyAliasKey(t *testing.T) {
+	content := `
+models:
+  model1:
+    cmd: path/to/cmd --arg1 one
+    proxy: "http://localhost:8080"
+profiles:
+  coding:
+    aliases:
+      "": model1
+`
+	_, err := LoadConfigFromReader(strings.NewReader(content))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "profile coding: alias name cannot be empty")
+}
+
+func TestConfig_Profiles_LegacyShapeRejected(t *testing.T) {
+	content := `
+models:
+  model1:
+    cmd: path/to/cmd --arg1 one
+    proxy: "http://localhost:8080"
+profiles:
+  test:
+    - model1
+`
+	_, err := LoadConfigFromReader(strings.NewReader(content))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy profiles format removed")
+}
+
+func TestConfig_Profiles_Resolution(t *testing.T) {
+	cfg := &Config{
+		Models: map[string]ModelConfig{
+			"model1": {Aliases: []string{"assistant", "static-only"}},
+			"model2": {},
+		},
+		aliases: map[string]string{
+			"assistant":   "model1",
+			"static-only": "model1",
+		},
+	}
+	profileAliases := map[string]string{
+		"assistant": "model2",
+		"new-alias": "model2",
+		"disabled":  "",
+		"unknown":   "missing-model",
+	}
+
+	realName, found := cfg.RealModelNameWithProfile("model1", profileAliases)
+	assert.True(t, found)
+	assert.Equal(t, "model1", realName)
+
+	realName, found = cfg.RealModelNameWithProfile("assistant", profileAliases)
+	assert.True(t, found)
+	assert.Equal(t, "model2", realName)
+
+	realName, found = cfg.RealModelNameWithProfile("static-only", profileAliases)
+	assert.True(t, found)
+	assert.Equal(t, "model1", realName)
+
+	_, found = cfg.RealModelNameWithProfile("disabled", profileAliases)
+	assert.False(t, found)
+	_, found = cfg.RealModelNameWithProfile("unknown", profileAliases)
+	assert.False(t, found)
+
+	assert.Equal(t, []string{"static-only"}, cfg.EffectiveAliasesFor("model1", profileAliases))
+	assert.Equal(t, []string{"assistant", "new-alias"}, cfg.EffectiveAliasesFor("model2", profileAliases))
+}
+
 func TestConfig_AutomaticPortAssignments(t *testing.T) {
 
 	t.Run("Default Port Ranges", func(t *testing.T) {
