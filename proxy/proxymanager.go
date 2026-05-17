@@ -868,8 +868,9 @@ func (pm *ProxyManager) mkProxyJSONHandler(cf captureFields) func(*gin.Context) 
 				}
 			}
 
-			// setParamsByID: set params based on the requested model ID (runs after setParams, can override it)
-			setParamsByIDParams, setParamsByIDKeys := pm.config.Models[modelID].Filters.SanitizedSetParamsByID(requestedModel)
+			// setParamsByID uses the profile-rewritten request name.
+			effectiveModel := pm.config.EffectiveRequestName(requestedModel, profileAliases)
+			setParamsByIDParams, setParamsByIDKeys := pm.config.Models[modelID].Filters.SanitizedSetParamsByID(effectiveModel)
 			for _, key := range setParamsByIDKeys {
 				pm.proxyLogger.Debugf("<%s> setting param by id: %s", requestedModel, key)
 				bodyBytes, err = sjson.SetBytes(bodyBytes, key, setParamsByIDParams[key])

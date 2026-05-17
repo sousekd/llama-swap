@@ -441,6 +441,10 @@ models:
 # - switch profiles from the UI dropdown or POST /api/profiles/activate/<name>
 # - the selected profile is runtime state and does not persist across restarts
 # - use null (~) or an empty string to disable a local alias while the profile is active
+# - profile aliases cannot use the same name as a model ID
+# - alias targets may be a model ID, another configured alias, or a setParamsByID
+#   variant key (which is auto-registered as an alias); cross-profile alias chaining
+#   is rejected at load time
 # profiles:
 #   balanced:
 #     description: "Use a mix of fast and capable local models"
@@ -453,6 +457,10 @@ models:
 #     aliases:
 #       llm-assistant-smart: "docker-llama"
 #       llm-code: ~
+#   fast:
+#     description: "Route llm-task to the no-think setParamsByID variant"
+#     aliases:
+#       llm-task: "gpt-oss-120b:nothink"
 
 # =============================================================================
 # matrix: run concurrent models with a solver-based swap DSL

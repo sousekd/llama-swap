@@ -1550,6 +1550,43 @@ models:
 	}
 }
 
+func TestProxyManager_Profile_SetParamsByIDViaChainedAlias(t *testing.T) {
+	cfg := testConfigFromYAML(t, `
+logLevel: error
+models:
+  model1:
+    cmd: {{RESPONDER}} --port ${PORT} --silent --respond model1
+    proxy: "http://127.0.0.1:${PORT}"
+    filters:
+      setParamsByID:
+        "${MODEL_ID}:nothink":
+          reasoning_effort: minimal
+profiles:
+  fast:
+    aliases:
+      llm-task: model1:nothink
+`)
+
+	proxy := New(cfg)
+	defer proxy.StopProcesses(StopWaitForInflightRequest)
+	injectTestHandlers(proxy, nil)
+
+	assert.NoError(t, proxy.SetActiveProfile("fast"))
+
+	reqBody := `{"model":"llm-task"}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	w := CreateTestResponseRecorder()
+	proxy.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+
+	requestBody, _ := response["request_body"].(string)
+	gotEffort := gjson.Get(requestBody, "reasoning_effort").String()
+	assert.Equal(t, "minimal", gotEffort)
+}
+
 func TestProxyManager_HealthEndpoint(t *testing.T) {
 	cfg := testConfigFromYAML(t, `
 healthCheckTimeout: 15
