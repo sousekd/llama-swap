@@ -112,7 +112,7 @@
       <select
         value={$activeProfile}
         onchange={handleProfileChange}
-        title="Active profile"
+        aria-label="Active profile"
         class="bg-surface border-0 rounded p-1 whitespace-nowrap text-gray-600 hover:text-black dark:text-gray-300 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary align-middle leading-6 font-[inherit] -translate-y-px"
       >
         <option value="">(no profile)</option>
