@@ -446,11 +446,11 @@ models:
 #   cannot shadow a model ID; both are rejected at load time.
 # - use null (~) to disable an alias while the profile is active
 # profiles:
-#   plan-faster:
-#     description: "Route llm-plan to the fast coder model"
+#   plan-smarter:
+#     description: "Use the smarter model for planning; disable image gen"
 #     aliases:
-#       llm-plan: "qwen3.6-27b"
-#       llm-image: ~
+#       llm-plan: "glm-5.1"
+#       image-gen: ~
 
 # =============================================================================
 # matrix: run concurrent models with a solver-based swap DSL
