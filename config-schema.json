@@ -371,7 +371,7 @@
                                 "null"
                             ]
                         },
-                        "description": "Map of alias name to real model ID. The target should be a key in the top-level models map; an empty string or YAML null (~) disables the local alias while this profile is active. Unknown targets are treated the same as disabled."
+                        "description": "Map of alias name to target. The target may be any model ID, static alias, or setParamsByID variant key; unknown targets are rejected at load time. An empty string or YAML null (~) disables the local alias while this profile is active."
                     }
                 }
             }
