@@ -440,8 +440,10 @@ models:
 # - remap aliases to different model IDs at runtime, switched via the UI
 #   dropdown or POST /api/profiles/activate/<name>
 # - the active profile is runtime state and does not persist across restarts
-# - target may be a model ID, an alias, or a setParamsByID variant key;
-#   profile aliases cannot shadow a model ID
+# - target must resolve in a single step: a model ID, a static model
+#   alias, or a setParamsByID variant key. Profile aliases never chain
+#   to other profile aliases (including within the same profile) and
+#   cannot shadow a model ID; both are rejected at load time.
 # - use null (~) to disable an alias while the profile is active
 # profiles:
 #   plan-faster:
