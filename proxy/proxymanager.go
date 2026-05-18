@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -107,7 +108,7 @@ func (pm *ProxyManager) ActiveProfile() (string, map[string]string) {
 	if !found {
 		return "", nil
 	}
-	return pm.activeProfileName, profile.Aliases
+	return pm.activeProfileName, maps.Clone(profile.Aliases)
 }
 
 func (pm *ProxyManager) SetActiveProfile(name string) error {
