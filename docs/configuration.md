@@ -436,31 +436,19 @@ models:
     cmdStop: docker stop ${MODEL_ID}
 
 # profiles: runtime-switchable alias overlays
-# - optional, default: empty dictionary
-# - useful when clients use stable aliases like llm-assistant-smart
-# - switch profiles from the UI dropdown or POST /api/profiles/activate/<name>
-# - the selected profile is runtime state and does not persist across restarts
-# - use null (~) or an empty string to disable a local alias while the profile is active
-# - profile aliases cannot use the same name as a model ID
-# - alias targets may be a model ID, another configured alias, or a setParamsByID
-#   variant key (which is auto-registered as an alias); cross-profile alias chaining
-#   is rejected at load time
+# - optional, default: empty
+# - remap aliases to different model IDs at runtime, switched via the UI
+#   dropdown or POST /api/profiles/activate/<name>
+# - the active profile is runtime state and does not persist across restarts
+# - target may be a model ID, an alias, or a setParamsByID variant key;
+#   profile aliases cannot shadow a model ID
+# - use null (~) to disable an alias while the profile is active
 # profiles:
-#   balanced:
-#     description: "Use a mix of fast and capable local models"
+#   plan-faster:
+#     description: "Route llm-plan to the fast coder model"
 #     aliases:
-#       llm-assistant-fast: "docker-llama"
-#       llm-assistant-smart: "gpt-oss-120b"
-#       llm-code: "gpt-oss-120b"
-#   economy:
-#     description: "Prefer smaller models and disable expensive coding aliases"
-#     aliases:
-#       llm-assistant-smart: "docker-llama"
-#       llm-code: ~
-#   fast:
-#     description: "Route llm-task to the no-think setParamsByID variant"
-#     aliases:
-#       llm-task: "gpt-oss-120b:nothink"
+#       llm-plan: "qwen3.6-27b"
+#       llm-image: ~
 
 # =============================================================================
 # matrix: run concurrent models with a solver-based swap DSL
