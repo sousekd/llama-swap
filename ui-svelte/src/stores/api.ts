@@ -185,6 +185,7 @@ export async function setActiveProfile(name: string): Promise<void> {
     if (!response.ok) {
       throw new Error(`Failed to activate profile: ${response.status}`);
     }
+    activeProfile.set(name);
   } catch (error) {
     console.error("Failed to activate profile:", error);
     throw error;
