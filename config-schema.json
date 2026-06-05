@@ -461,6 +461,11 @@
             "default": [],
             "description": "Require an API key when making requests to inference endpoints. When empty, authorization will not be checked. Each key is a non-empty string."
         },
+        "adminPin": {
+            "type": "string",
+            "default": "",
+            "description": "A PIN to lock sensitive UI features like activity capture details. When empty, all features are unlocked."
+        },
         "peers": {
             "type": "object",
             "additionalProperties": {
