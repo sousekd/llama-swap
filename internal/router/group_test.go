@@ -363,3 +363,127 @@ func TestGroup_NonExclusiveDoesNotUnloadPersistentExclusive(t *testing.T) {
 		t.Errorf("b.runCalls=%d want 1", got)
 	}
 }
+
+// TestGroup_SamePoolExclusiveEvicts verifies that two exclusive groups in the
+// same named pool still evict each other. See issue #632.
+func TestGroup_SamePoolExclusiveEvicts(t *testing.T) {
+	a := newFakeProcess("a")
+	a.markReady()
+	go a.Run(0)
+
+	b := newFakeProcess("b")
+	b.autoReady = true
+
+	conf := config.Config{
+		HealthCheckTimeout: 5,
+		Groups: map[string]config.GroupConfig{
+			"g1": {Swap: true, Exclusive: true, Pool: "GPU-0", Members: []string{"a"}},
+			"g2": {Swap: true, Exclusive: true, Pool: "GPU-0", Members: []string{"b"}},
+		},
+	}
+	g := newTestGroup(t, conf, map[string]process.Process{"a": a, "b": b})
+
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, newRequest("b"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := a.stopCalls.Load(); got != 1 {
+		t.Errorf("a.stopCalls=%d want 1 (same-pool exclusive must evict)", got)
+	}
+}
+
+// TestGroup_DifferentPoolsIsolated verifies that exclusive groups in different
+// named pools do not evict each other. See issue #632.
+func TestGroup_DifferentPoolsIsolated(t *testing.T) {
+	a := newFakeProcess("a")
+	a.markReady()
+	go a.Run(0)
+
+	b := newFakeProcess("b")
+	b.autoReady = true
+
+	conf := config.Config{
+		HealthCheckTimeout: 5,
+		Groups: map[string]config.GroupConfig{
+			"g1": {Swap: true, Exclusive: true, Pool: "GPU-0", Members: []string{"a"}},
+			"g2": {Swap: true, Exclusive: true, Pool: "GPU-1", Members: []string{"b"}},
+		},
+	}
+	g := newTestGroup(t, conf, map[string]process.Process{"a": a, "b": b})
+
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, newRequest("b"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := a.stopCalls.Load(); got != 0 {
+		t.Errorf("a.stopCalls=%d want 0 (different pools must not evict)", got)
+	}
+	if got := b.runCalls.Load(); got != 1 {
+		t.Errorf("b.runCalls=%d want 1", got)
+	}
+}
+
+// TestGroup_GlobalPoolInteractsWithNamed verifies that a group with no pool is
+// global and still evicts a named-pool group (and vice versa). See issue #632.
+func TestGroup_GlobalPoolInteractsWithNamed(t *testing.T) {
+	a := newFakeProcess("a")
+	a.markReady()
+	go a.Run(0)
+
+	b := newFakeProcess("b")
+	b.autoReady = true
+
+	conf := config.Config{
+		HealthCheckTimeout: 5,
+		Groups: map[string]config.GroupConfig{
+			"g1": {Swap: true, Exclusive: true, Pool: "GPU-0", Members: []string{"a"}},
+			"g2": {Swap: true, Exclusive: true, Members: []string{"b"}}, // no pool = global
+		},
+	}
+	g := newTestGroup(t, conf, map[string]process.Process{"a": a, "b": b})
+
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, newRequest("b"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := a.stopCalls.Load(); got != 1 {
+		t.Errorf("a.stopCalls=%d want 1 (global pool must interact with named pool)", got)
+	}
+}
+
+// TestGroup_DifferentPoolsBidirectionalIsolated verifies that pool scoping also
+// gates the bidirectional case: a non-exclusive group in one pool does not
+// evict an exclusive group in a different pool. See issues #215 and #632.
+func TestGroup_DifferentPoolsBidirectionalIsolated(t *testing.T) {
+	a := newFakeProcess("a")
+	a.markReady()
+	go a.Run(0)
+
+	b := newFakeProcess("b")
+	b.autoReady = true
+
+	conf := config.Config{
+		HealthCheckTimeout: 5,
+		Groups: map[string]config.GroupConfig{
+			"g1": {Swap: true, Exclusive: true, Pool: "GPU-0", Members: []string{"a"}},
+			"g2": {Swap: true, Exclusive: false, Pool: "GPU-1", Members: []string{"b"}},
+		},
+	}
+	g := newTestGroup(t, conf, map[string]process.Process{"a": a, "b": b})
+
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, newRequest("b"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := a.stopCalls.Load(); got != 0 {
+		t.Errorf("a.stopCalls=%d want 0 (different pools must not evict, even bidirectionally)", got)
+	}
+}
