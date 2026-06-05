@@ -272,6 +272,7 @@ func (s *Server) routes() {
 	mux.Handle("GET /api/metrics/stats", apiChain.ThenFunc(s.handleAPIActivityStats))
 	mux.Handle("GET /api/performance", apiChain.ThenFunc(s.handleAPIPerformance))
 	mux.Handle("GET /api/version", apiChain.ThenFunc(s.handleAPIVersion))
+	mux.Handle("POST /api/verify-pin", apiChain.ThenFunc(s.handleAPIVerifyPin))
 	mux.Handle("GET /api/captures/{id}", apiChain.ThenFunc(s.handleAPICapture))
 
 	s.mux = mux

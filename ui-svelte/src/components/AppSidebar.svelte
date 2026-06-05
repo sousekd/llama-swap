@@ -1,6 +1,6 @@
 <script lang="ts">
   import { link } from "svelte-spa-router";
-  import { FerrisWheel, Boxes, Activity, ScrollText, Gauge, Sun, Moon, Monitor, ChevronRight, Settings } from "@lucide/svelte";
+  import { FerrisWheel, Boxes, Activity, ScrollText, Gauge, Sun, Moon, Monitor, ChevronRight, Settings, Lock } from "@lucide/svelte";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import * as Collapsible from "$lib/components/ui/collapsible/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -8,10 +8,12 @@
   import { currentRoute } from "../stores/route";
   import { playgroundActivity } from "../stores/playgroundActivity";
   import { performanceEnabled, models, profiles, activeProfile, fetchProfiles, setActiveProfile } from "../stores/api";
+  import { isLocked } from "../stores/pin";
   import { showUnlistedModels } from "../stores/modelDisplay";
   import { modelsMenuOpen } from "../stores/sidebar";
   import type { Model } from "../lib/types";
   import ConnectionStatus from "./ConnectionStatus.svelte";
+  import PinDialog from "./PinDialog.svelte";
 
   function handleTitleChange(newTitle: string): void {
     const sanitized = newTitle.replace(/\n/g, "").trim().substring(0, 64) || "llama-swap";
@@ -61,6 +63,8 @@
       void fetchProfiles();
     }
   }
+
+  let pinDialogOpen = $state(false);
 </script>
 
 <Sidebar.Root collapsible="icon">
@@ -241,7 +245,20 @@
         {/if}
         <span class="sr-only">Toggle theme</span>
       </Button>
+      {#if $isLocked}
+        <Button
+          variant="ghost"
+          size="icon"
+          onclick={() => (pinDialogOpen = true)}
+          title="Unlock admin features"
+        >
+          <Lock />
+          <span class="sr-only">Unlock admin features</span>
+        </Button>
+      {/if}
     </div>
   </Sidebar.Footer>
   <Sidebar.Rail />
 </Sidebar.Root>
+
+<PinDialog bind:open={pinDialogOpen} />
