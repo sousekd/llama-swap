@@ -63,9 +63,19 @@ func NewGroup(conf config.Config, proxylog, upstreamlog *logmon.Monitor) (*Group
 // any other non-persistent group, and loading a model from a non-exclusive
 // group stops any running exclusive non-persistent group. persistent=true
 // shields a group from eviction in both directions. See issue #215.
+//
+// Cross-group eviction is further scoped by pools: two groups interact only
+// when their pools interact (see poolsInteract). See issue #632.
 type groupSwapper struct {
 	config       config.Config
 	modelToGroup map[string]string
+}
+
+// poolsInteract reports whether two pools can evict each other. An empty pool
+// is global and interacts with every pool; named pools interact only with the
+// same name or with the global pool. See issue #632.
+func poolsInteract(a, b string) bool {
+	return a == "" || b == "" || a == b
 }
 
 func (p *groupSwapper) EvictionFor(target string, running []string) []string {
@@ -87,13 +97,15 @@ func (p *groupSwapper) EvictionFor(target string, running []string) []string {
 		case og == tg && tgCfg.Swap:
 			seen[mID] = struct{}{}
 			result = append(result, mID)
-		// An exclusive target stops every other non-persistent group.
-		case og != tg && tgCfg.Exclusive && !ogCfg.Persistent:
+		// An exclusive target stops every other non-persistent group in an
+		// interacting pool.
+		case og != tg && tgCfg.Exclusive && !ogCfg.Persistent && poolsInteract(tgCfg.Pool, ogCfg.Pool):
 			seen[mID] = struct{}{}
 			result = append(result, mID)
 		// Bidirectional exclusivity: a non-exclusive target still stops any
-		// running exclusive non-persistent group, so the two never coexist.
-		case og != tg && !tgCfg.Exclusive && ogCfg.Exclusive && !ogCfg.Persistent:
+		// running exclusive non-persistent group in an interacting pool, so the
+		// two never coexist.
+		case og != tg && !tgCfg.Exclusive && ogCfg.Exclusive && !ogCfg.Persistent && poolsInteract(tgCfg.Pool, ogCfg.Pool):
 			seen[mID] = struct{}{}
 			result = append(result, mID)
 		}
