@@ -297,10 +297,10 @@ func TestGroup_PersistentNotEvicted(t *testing.T) {
 	}
 }
 
-// TestGroup_NonExclusiveDoesNotUnloadExclusive pins a backwards-compatible
-// gotcha from the original ProcessGroup: when a model in a non-exclusive group
-// is loaded, any running exclusive group keeps running. The two coexist.
-func TestGroup_NonExclusiveDoesNotUnloadExclusive(t *testing.T) {
+// TestGroup_NonExclusiveUnloadsExclusive verifies bidirectional exclusivity:
+// loading a model in a non-exclusive group unloads any running exclusive
+// non-persistent group, so the two never coexist. See issue #215.
+func TestGroup_NonExclusiveUnloadsExclusive(t *testing.T) {
 	a := newFakeProcess("a")
 	a.markReady()
 	go a.Run(0)
@@ -323,8 +323,42 @@ func TestGroup_NonExclusiveDoesNotUnloadExclusive(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
 	}
+	if got := a.stopCalls.Load(); got != 1 {
+		t.Errorf("a.stopCalls=%d want 1 (non-exclusive target must unload exclusive group)", got)
+	}
+	if got := b.runCalls.Load(); got != 1 {
+		t.Errorf("b.runCalls=%d want 1", got)
+	}
+}
+
+// TestGroup_NonExclusiveDoesNotUnloadPersistentExclusive verifies that
+// bidirectional exclusivity still respects persistent=true: a non-exclusive
+// target does not evict a running exclusive group that is persistent.
+func TestGroup_NonExclusiveDoesNotUnloadPersistentExclusive(t *testing.T) {
+	a := newFakeProcess("a")
+	a.markReady()
+	go a.Run(0)
+
+	b := newFakeProcess("b")
+	b.autoReady = true
+
+	conf := config.Config{
+		HealthCheckTimeout: 5,
+		Routing: groupRouting(map[string]config.GroupConfig{
+			"g1": {Swap: true, Exclusive: true, Persistent: true, Members: []string{"a"}},
+			"g2": {Swap: true, Exclusive: false, Members: []string{"b"}},
+		}),
+	}
+	g := newTestGroup(t, conf, map[string]process.Process{"a": a, "b": b})
+
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, newRequest("b"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
 	if got := a.stopCalls.Load(); got != 0 {
-		t.Errorf("a.stopCalls=%d want 0 (non-exclusive target must not unload exclusive group)", got)
+		t.Errorf("a.stopCalls=%d want 0 (persistent exclusive group must not be evicted)", got)
 	}
 	if a.State() != process.StateStarting && a.State() != process.StateReady {
 		t.Errorf("a state=%s want still running", a.State())
