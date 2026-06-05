@@ -307,13 +307,87 @@ func TestServer_APIVersion(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
-	var got map[string]string
+	var got map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if got["version"] != "1.2.3" || got["commit"] != "deadbeef" || got["build_date"] != "2026-05-19" {
 		t.Errorf("body = %v", got)
 	}
+	if got["pin_required"] != false {
+		t.Errorf("pin_required = %v, want false", got["pin_required"])
+	}
+}
+
+func TestServer_APIVersion_PinRequired(t *testing.T) {
+	s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
+	s.cfg.AdminPin = "1234"
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/version", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["pin_required"] != true {
+		t.Errorf("pin_required = %v, want true", got["pin_required"])
+	}
+}
+
+func TestServer_VerifyPin(t *testing.T) {
+	verify := func(t *testing.T, s *Server, body string) (int, bool) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/verify-pin", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		var resp struct {
+			OK bool `json:"ok"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return w.Code, resp.OK
+	}
+
+	t.Run("no pin configured always ok", func(t *testing.T) {
+		s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
+		code, ok := verify(t, s, `{"pin":"anything"}`)
+		if code != http.StatusOK || !ok {
+			t.Errorf("code=%d ok=%v, want 200 true", code, ok)
+		}
+	})
+
+	t.Run("correct pin", func(t *testing.T) {
+		s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
+		s.cfg.AdminPin = "1234"
+		code, ok := verify(t, s, `{"pin":"1234"}`)
+		if code != http.StatusOK || !ok {
+			t.Errorf("code=%d ok=%v, want 200 true", code, ok)
+		}
+	})
+
+	t.Run("wrong pin", func(t *testing.T) {
+		s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
+		s.cfg.AdminPin = "1234"
+		code, ok := verify(t, s, `{"pin":"0000"}`)
+		if code != http.StatusUnauthorized || ok {
+			t.Errorf("code=%d ok=%v, want 401 false", code, ok)
+		}
+	})
+
+	t.Run("bad body", func(t *testing.T) {
+		s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
+		s.cfg.AdminPin = "1234"
+		req := httptest.NewRequest(http.MethodPost, "/api/verify-pin", strings.NewReader("not json"))
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("code=%d, want 400", w.Code)
+		}
+	})
 }
 
 func TestServer_APIHardware(t *testing.T) {
