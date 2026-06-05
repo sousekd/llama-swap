@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -352,10 +353,11 @@ func (s *Server) handleAPIPerformance(w http.ResponseWriter, r *http.Request) {
 // handleAPIVersion serves the build metadata.
 func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"version":    s.build.Version,
-		"commit":     s.build.Commit,
-		"build_date": s.build.Date,
+	json.NewEncoder(w).Encode(map[string]any{
+		"version":      s.build.Version,
+		"commit":       s.build.Commit,
+		"build_date":   s.build.Date,
+		"pin_required": len(s.cfg.AdminPin) > 0,
 	})
 }
 
@@ -402,6 +404,30 @@ func (s *Server) handleAPISetFreeze(w http.ResponseWriter, r *http.Request) {
 	s.local.SetSwapsFrozen(req.Frozen)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"frozen": s.local.SwapsFrozen()})
+}
+
+// handleAPIVerifyPin validates the UI-only Activity capture lock.
+func (s *Server) handleAPIVerifyPin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pin string `json:"pin"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		swaputil.SendResponse(w, r, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if len(s.cfg.AdminPin) == 0 {
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		return
+	}
+
+	if subtle.ConstantTimeCompare([]byte(req.Pin), []byte(s.cfg.AdminPin)) == 1 {
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	} else {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]bool{"ok": false})
+	}
 }
 
 // handleAPICapture returns the stored request/response capture for a metric ID.

@@ -703,6 +703,11 @@
             },
             "additionalProperties": false,
             "description": "Tailcat HTTP policy. A Tailcat listener starts only when -listen-tailcat supplies a server PrivateKey JSON file."
+            },
+        "adminPin": {
+            "type": "string",
+            "default": "",
+            "description": "A PIN to lock sensitive UI features like activity capture details. When empty, all features are unlocked."
         },
         "peers": {
             "type": "object",

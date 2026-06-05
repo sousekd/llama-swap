@@ -189,6 +189,7 @@ export interface VersionInfo {
   build_date: string;
   commit: string;
   version: string;
+  pin_required?: boolean;
 }
 
 export interface HardwareSnapshot {
