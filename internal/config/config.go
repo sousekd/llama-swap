@@ -77,6 +77,10 @@ type GroupConfig struct {
 	Exclusive  bool     `yaml:"exclusive"`
 	Persistent bool     `yaml:"persistent"`
 	Members    []string `yaml:"members"`
+	// Pool partitions exclusivity into independent segments. Groups in the same
+	// pool affect each other; groups in different named pools do not. An empty
+	// pool is global and interacts with every pool. See issue #632.
+	Pool string `yaml:"pool"`
 }
 
 // set default values for GroupConfig
