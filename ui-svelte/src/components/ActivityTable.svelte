@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { ActivityLogEntry, InflightRequestEntry, ReqRespCapture } from "../lib/types";
   import { cancelInflightRequest, getCapture, uiConfig } from "../stores/api";
+  import { isLocked } from "../stores/pin";
   import { persistentStore } from "../stores/persistent";
   import CaptureDialog from "./CaptureDialog.svelte";
+  import PinDialog from "./PinDialog.svelte";
   import {
     type ColumnDef,
     type SortingState,
@@ -249,6 +251,7 @@
   let selectedCapture = $state<ReqRespCapture | null>(null);
   let dialogOpen = $state(false);
   let loadingCaptureId = $state<number | null>(null);
+  let pinDialogOpen = $state(false);
   let cancelingInflightIds = $state<string[]>([]);
   let inflightNowMs = $state(performance.now());
 
@@ -270,6 +273,10 @@
   });
 
   async function viewCapture(id: number) {
+    if ($isLocked) {
+      pinDialogOpen = true;
+      return;
+    }
     loadingCaptureId = id;
     const capture = await getCapture(id);
     loadingCaptureId = null;
@@ -863,3 +870,4 @@
 </Card.Root>
 
 <CaptureDialog capture={selectedCapture} open={dialogOpen} onclose={closeDialog} />
+<PinDialog bind:open={pinDialogOpen} />
