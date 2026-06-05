@@ -19,6 +19,7 @@ import type {
 import { appendActivityFilters, type ActivityFilters } from "../lib/activityFilters";
 import { apiUrl } from "../lib/apiPath";
 import { connectionState } from "./theme";
+import { pinRequired } from "./pin";
 
 // Stores
 export const models = writable<Model[]>([]);
@@ -230,6 +231,7 @@ connectionState.subscribe(async (status) => {
       }
       const data: VersionInfo = await response.json();
       versionInfo.set(data);
+      pinRequired.set(data.pin_required ?? false);
     } catch (error) {
       console.error(error);
     }
