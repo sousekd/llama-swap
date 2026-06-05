@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button/index.js";
+  import { isLocked } from "../../stores/pin";
 
   interface Props {
     hasCapture: boolean;
@@ -11,7 +12,7 @@
 </script>
 
 {#if hasCapture}
-  <Button variant="outline" size="xs" {onclick} disabled={loading}>
+  <Button variant="outline" size="xs" {onclick} disabled={loading || $isLocked}>
     {loading ? "..." : "View"}
   </Button>
 {:else}
