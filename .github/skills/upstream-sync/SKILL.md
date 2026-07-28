@@ -88,12 +88,14 @@ Before the sync, capture a baseline of pre-existing warnings on `release/staging
 
 ```bash
 gofmt -l . > /tmp/pre-sync-gofmt.txt
-staticcheck ./... > /tmp/pre-sync-staticcheck.txt 2>&1 || true
+staticcheck ./internal/... > /tmp/pre-sync-staticcheck.txt 2>&1 || true
 ```
 
 After the sync, diff against the new state. Anything that was already there is upstream's problem and must not be "fixed" as part of a sync. Anything new is yours to address.
 
-`proxy/ui_dist/` is gitignored on working branches; the release pipeline regenerates it. Never commit it from a sync.
+As of the v244 sync, `staticcheck ./internal/...` is **completely silent** on `release/staging`. The old SA1019 baseline noise (from `peerproxy.go`) is gone. Treat any staticcheck output as a new regression introduced by the sync until proven otherwise.
+
+`internal/server/ui_dist/` is gitignored on working branches; the release pipeline regenerates it. Never commit it from a sync.
 
 ## Decision: minor sync vs major sync
 
@@ -235,14 +237,14 @@ On Linux/macOS, the project's Makefile is the canonical entry point:
 
 ```bash
 gofmt -l .                       # must print nothing new vs. baseline
-make test-dev                    # go test + staticcheck (proxy/ scope)
+make test-dev                    # go test + staticcheck (internal/ scope)
 make test-all                    # adds long-running concurrency tests
 go build ./...
 
 cd ui-svelte
 npm ci                           # only if package-lock.json changed
 make test-ui                     # or: npm run check && npm test
-npm run build                    # also refreshes proxy/ui_dist
+npm run build                    # also refreshes internal/server/ui_dist
 cd ..
 ```
 
@@ -250,7 +252,7 @@ Compare `staticcheck`/`gofmt` output against the baseline you captured at the st
 
 If any focused test fails after a cherry-pick, **fix it before the next cherry-pick**. Do not stack additional commits on a failing branch.
 
-If proxy tests complain about a missing helper binary, build whatever they ask for under `cmd/` (the test failure usually names the path). The build command is `go build -o <path> ./cmd/<name>` (with a `.exe` suffix on Windows).
+If tests complain about a missing helper binary, build whatever they ask for under `cmd/` (the test failure usually names the path). The build command is `go build -o <path> ./cmd/<name>` (with a `.exe` suffix on Windows).
 
 ### Phase 5 — Reconcile fork features with new upstream surface
 
@@ -497,9 +499,9 @@ This environment has a few quirks worth knowing:
 - The `Makefile` `test-dev` and `test-all` targets use Unix-only commands (`mkdir -p`) and fail on Windows. Substitute these direct commands for the full validation pass:
   ```powershell
   .dev/check-go-format.ps1
-  go test -short -count=1 ./proxy/...
-  go test -race -count=1 -short ./proxy/...
-  staticcheck ./proxy/...
+  go test -short -count=1 ./internal/...
+  go test -race -count=1 -short ./internal/...
+  staticcheck ./internal/...
   go build ./...
 
   cd ui-svelte
@@ -509,7 +511,7 @@ This environment has a few quirks worth knowing:
   npm run build
   cd ..
   ```
-- The `simple-responder` helper used by some proxy tests must be built with the `.exe` suffix:
+- The `simple-responder` helper used by some tests must be built with the `.exe` suffix:
   ```powershell
   go build -o build/simple-responder.exe cmd/simple-responder/simple-responder.go
   ```
@@ -537,3 +539,7 @@ Concise pattern notes from past syncs. Add new entries here when a sync teaches 
 - **`git branch -f` retargets upstream tracking silently.** Forcing `release/staging` to `origin/test/<name>` for a candidate promotion sets the local branch's upstream to `origin/test/<name>` as a side-effect, which then makes `git pull` and `git status` reports lie. Always run `git branch --set-upstream-to=origin/release/staging release/staging` immediately after the promotion push.
 - **Save the old candidate tip before amending.** When iterating on `candidate/<name>`, the next step (`git rebase --onto candidate/<name> <old-tip> test/<name>`) needs the pre-amend SHA. Capture it into a shell variable before the amend; pulling it from `git reflog` mid-flow works but is fiddly.
 - **Separate worktree for the test branch.** When actively iterating on a candidate branch while validating the test integration, `git worktree add` for `test/<name>` removes constant branch switching, keeps `node_modules` consistent for the validation worktree, and lets the main worktree stay focused on the upstream-clean commits.
+- **Rehearse a risky replay in a throwaway worktree first.** Before executing a sync that drops or reorders fork commits, run the entire cherry-pick sequence in `git worktree add`-created scratch tree (junction/symlink `node_modules` in so the UI checks work), record the exact conflicting files and hunks, then tear it down. This converts the conflict list from prediction into transcript, and makes the real run mechanical. Did this for v244: predicted conflicts matched byte-for-byte.
+- **Dropping a fork commit conflicts *later* commits on context, not content.** When you deliberately skip a commit during replay (e.g. a feature superseded upstream), subsequent cherry-picks can still conflict because their diff *context lines* reference the skipped code. In the v244 sync, skipping the fork profiles commit made the admin-PIN commit conflict in `AppSidebar.svelte` even though the two features are unrelated. Resolve by keeping only the later commit's own additions and discarding the context that belonged to the skipped commit — do not resurrect the skipped feature to make the patch apply.
+- **Residue greps must exclude identifiers upstream also uses.** After removing a fork feature that upstream reimplemented, grepping for generic names (`setActiveProfile`, `fetchProfiles`, `CreateProfileMiddleware`) produces false positives because upstream's own implementation uses them too. Build the marker list from identifiers *unique to the fork version* (for v244: `EffectiveAliasesFor`, `RealModelNameWithProfile`, `EffectiveRequestName`, `activeProfileName`, `profiles/activate`, `handleAPIListProfiles`, `handleAPIActivateProfile`) and verify the upstream feature is still intact separately.
+- **The "subject lists must match" check is void when intentionally dropping a commit.** The normal post-replay assertion is that the replayed subject list equals the pre-sync list. When a commit is deliberately skipped, the correct assertion becomes: the replayed list equals the pre-sync list *minus exactly the dropped commit, and nothing else*. State the expected count up front so the deviation is auditable rather than alarming.
