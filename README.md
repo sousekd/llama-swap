@@ -2,7 +2,7 @@
 
 This repository is a customized fork of [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap).
 
-The fork is kept close to upstream, but carries a small set of changes aimed at the legacy `groups:` configuration path, a practical UI/privacy control, and a runtime-switchable alias overlay.
+The fork is kept close to upstream, but carries a small set of changes aimed at the legacy `groups:` configuration path and a practical UI/privacy control.
 
 For the upstream project, general installation instructions, and the broader feature set, see the original repository:
 
@@ -19,7 +19,8 @@ The two scheduling tweaks in this fork modify only the legacy `groups:` codepath
 - Bidirectional group exclusivity (`groups:` path only): fixes the one-way exclusivity behavior so conflicting groups unload each other consistently. Related upstream discussion: [issue #215](https://github.com/mostlygeek/llama-swap/issues/215), [PR #631](https://github.com/mostlygeek/llama-swap/pull/631)
 - Pool-scoped group exclusivity (`groups:` path only): adds an optional `pool` field so exclusivity applies within a named resource boundary instead of always globally. Related upstream discussion: [issue #632](https://github.com/mostlygeek/llama-swap/issues/632)
 - Admin PIN lock for Activity captures: adds an optional `adminPin` setting and a UI unlock flow so sensitive capture data in the Activity panel is not immediately visible to all UI users. Related upstream discussion: [discussion #640](https://github.com/mostlygeek/llama-swap/discussions/640)
-- Runtime alias profiles: adds an optional `profiles:` block and a UI dropdown to remap aliases to different models at runtime without a restart or client change. Upstream removed its own list-based `profiles:` feature (in favour of `groups:`), so this fork reclaims the `profiles:` key for the alias overlay. Background: [PR #774](https://github.com/mostlygeek/llama-swap/pull/774)
+
+Previously included, now removed: the fork's runtime alias profiles feature. Upstream shipped its own `profiles:` implementation in v244, so the fork version was dropped during that sync. See [Runtime alias profiles — removed in the v244 sync](#4-runtime-alias-profiles--removed-in-the-v244-sync) for the migration steps.
 
 ## Change details
 
@@ -124,20 +125,19 @@ Warning:
 - the current implementation mainly disables the normal UI path for viewing capture details
 - the capture data is not independently protected by the PIN at the API level, so users with browser developer tools or direct API access can still retrieve it with minimal effort
 
-### 4. Runtime alias profiles
+### 4. Runtime alias profiles — removed in the v244 sync
 
-This fork adds an optional `profiles:` block that remaps aliases to different models at runtime. Switching profiles is done from the UI sidebar dropdown or via `POST /api/profiles/activate/<name>`, and takes effect immediately without restarting llama-swap or reconfiguring clients.
+This fork used to carry its own `profiles:` block for remapping aliases at runtime. Upstream shipped a native profiles feature in [PR #935](https://github.com/mostlygeek/llama-swap/pull/935), released in v244, and the fork version was removed during that sync. The upstream implementation is a superset of what the fork offered, so there is no reason to keep a competing one.
 
-Useful when clients (agents, harnesses, IDE plugins) address models through semantic aliases such as `llm-plan`, `llm-code`, or `image-gen`, and you want to rewire those aliases for a focused workflow without touching client configuration.
+**This is a breaking configuration change.** The fork used `aliases:` inside a profile; upstream uses `pins:`. Upstream's loader ignores the unknown `aliases:` key, which leaves the profile with no pins and fails validation at startup:
 
-Example:
+```
+profiles.<name>.pins must contain at least one entry
+```
+
+Rename the key to migrate. Before (fork):
 
 ```yaml
-models:
-  qwen3.6-27b: { cmd: ..., aliases: [llm-plan, llm-code] }
-  glm-5.1:     { cmd: ... }
-  flux:        { cmd: ..., aliases: [image-gen] }
-
 profiles:
   plan-smarter:
     description: "Use the smarter model for planning; disable image gen"
@@ -146,20 +146,27 @@ profiles:
       image-gen: ~
 ```
 
-With `plan-smarter` active, `llm-plan` resolves to `glm-5.1` instead of the default `qwen3.6-27b`, and `image-gen` is disabled so stray requests do not trigger an unrelated model load.
+After (upstream v244+):
 
-Behavior:
+```yaml
+profiles:
+  plan-smarter:
+    description: "Use the smarter model for planning; disable image gen"
+    pins:
+      llm-plan: "glm-5.1"
+      image-gen: ~
+```
 
-- additive: if `profiles:` is absent the UI dropdown does not appear and behavior is unchanged
-- profile targets must resolve in a single step to a model ID, a static alias, or a `setParamsByID` variant key; profile-to-profile chains and shadowing of model IDs are rejected at load time
-- `~` (or an empty string) disables an alias while that profile is active
-- the active profile is runtime state and does not persist across restarts
-- `/v1/models` listings reflect the active profile's alias reassignments
+Behavioral differences to be aware of:
 
-Upstream previously exposed a list-based `profiles:` block for preloading model groups but removed it in favour of `groups:`; this fork reuses the now-free `profiles:` key for the runtime alias overlay described here. Legacy list-form `profiles:` configs are rejected at load time with a message pointing here.
+- upstream allows a pin to shadow a real model ID; the fork rejected this at load time
+- pin targets may also be selectors, not just model IDs and static aliases
+- upstream adds `/upstream/<model>/...` path rewriting for the active profile
+- the activation API moved from `POST /api/profiles/activate/<name>` to `PUT /api/profiles/active` with a `{"name": "<name>"}` body
+- the profile picker moved from the fork's sidebar dropdown to upstream's header
 
-See [`docs/configuration.md`](./docs/configuration.md) for the full specification.
+See upstream's [`docs/configuration.md`](./docs/configuration.md) for the current specification.
 
 ## Scope of this fork
 
-This fork intentionally keeps its public delta small. The two scheduling changes are confined to the legacy `groups:` codepath and do not touch upstream's `matrix:` solver. The admin PIN is a small, optional UI gate. Runtime alias profiles are additive and live behind an opt-in `profiles:` block. The goal is to stay close to upstream while carrying a few targeted changes that are useful in deployments still based on `groups:` or that need runtime alias rerouting.
+This fork intentionally keeps its public delta small. The two scheduling changes are confined to the legacy `groups:` codepath and do not touch upstream's `matrix:` solver. The admin PIN is a small, optional UI gate; upstream v244 added no new endpoint that exposes captured request or response bodies, so the gate still covers the only surface that does. The goal is to stay close to upstream while carrying a few targeted changes that are useful in deployments still based on `groups:`.
