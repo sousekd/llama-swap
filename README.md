@@ -2,7 +2,7 @@
 
 This repository is a customized fork of [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap).
 
-The fork is kept close to upstream, but carries a small set of changes aimed at the legacy `groups:` configuration path and a practical UI/privacy control.
+The fork is kept close to upstream, but carries a small set of changes aimed at the legacy `groups:` configuration path, a practical UI/privacy control, and a startup setting for upstream's profiles feature.
 
 For the upstream project, general installation instructions, and the broader feature set, see the original repository:
 
@@ -12,13 +12,16 @@ For the upstream project, general installation instructions, and the broader fea
 
 Upstream introduced a solver-based [`matrix:` configuration](https://github.com/mostlygeek/llama-swap/pull/646) that handles concurrent model execution and eviction natively. A configuration must use either `matrix:` or the legacy `groups:`, not both. If you adopt `matrix:`, the bidirectional and pool-scoped behaviors below are already covered by the solver and you do not need this fork.
 
-The two scheduling tweaks in this fork modify only the legacy `groups:` codepath, which remains useful when a `groups:`-based configuration is preferred for its simplicity. The admin PIN lock is independent of the chosen scheduling path.
+The two scheduling tweaks in this fork modify only the legacy `groups:` codepath, which remains useful when a `groups:`-based configuration is preferred for its simplicity. The admin PIN lock and the default profile setting are independent of the chosen scheduling path.
+
+Both scheduling tweaks were proposed upstream and declined in favour of `matrix:` ([PR #631](https://github.com/mostlygeek/llama-swap/pull/631) was closed unmerged, [issue #632](https://github.com/mostlygeek/llama-swap/issues/632) was resolved by the solver). They will not be proposed again. They are retained here only until `matrix:` has proven itself in day-to-day use, after which they are expected to be dropped from the fork.
 
 ## Fork changes at a glance
 
-- Bidirectional group exclusivity (`groups:` path only): fixes the one-way exclusivity behavior so conflicting groups unload each other consistently. Related upstream discussion: [issue #215](https://github.com/mostlygeek/llama-swap/issues/215), [PR #631](https://github.com/mostlygeek/llama-swap/pull/631)
-- Pool-scoped group exclusivity (`groups:` path only): adds an optional `pool` field so exclusivity applies within a named resource boundary instead of always globally. Related upstream discussion: [issue #632](https://github.com/mostlygeek/llama-swap/issues/632)
+- Bidirectional group exclusivity (`groups:` path only): fixes the one-way exclusivity behavior so conflicting groups unload each other consistently. Fork-only, superseded upstream by `matrix:`; not proposed again. Related upstream discussion: [issue #215](https://github.com/mostlygeek/llama-swap/issues/215), [PR #631](https://github.com/mostlygeek/llama-swap/pull/631)
+- Pool-scoped group exclusivity (`groups:` path only): adds an optional `pool` field so exclusivity applies within a named resource boundary instead of always globally. Fork-only, superseded upstream by `matrix:`; not proposed again. Related upstream discussion: [issue #632](https://github.com/mostlygeek/llama-swap/issues/632)
 - Admin PIN lock for Activity captures: adds an optional `adminPin` setting and a UI unlock flow so sensitive capture data in the Activity panel is not immediately visible to all UI users. Related upstream discussion: [discussion #640](https://github.com/mostlygeek/llama-swap/discussions/640)
+- Default profile at startup: adds an optional `defaultProfile` setting so a configured profile is active after a restart or a configuration reload, instead of always starting with none. Candidate for a future upstream contribution; no issue or pull request has been filed yet.
 
 Previously included, now removed: the fork's runtime alias profiles feature. Upstream shipped its own `profiles:` implementation in v244, so the fork version was dropped during that sync. See [Runtime alias profiles — removed in the v244 sync](#4-runtime-alias-profiles--removed-in-the-v244-sync) for the migration steps.
 
@@ -168,6 +171,33 @@ Behavioral differences to be aware of:
 
 See upstream's [`docs/configuration.md`](./docs/configuration.md) for the current specification.
 
+### 5. Default profile at startup
+
+Upstream's `profiles:` can only be activated at runtime, through the header dropdown or the API. A restart or a configuration reload always lands on "no profile", which is awkward for unattended deployments that want a specific profile to be in effect as soon as the process is up.
+
+This fork adds an optional `defaultProfile` top-level setting:
+
+```yaml
+profiles:
+  coding:
+    description: "Coding-focused model routing"
+    pins:
+      llm-code: "gpt-oss-120b"
+
+defaultProfile: "coding"
+```
+
+Behavior:
+
+- if `defaultProfile` is not configured, the UI and API behave like upstream and no profile is active at startup
+- if configured, it must name a key under `profiles:` or the configuration fails to load with `defaultProfile references unknown profile "..."`
+- the profile is active for the very first request, and `/v1/models` reflects its pins immediately
+- a configuration reload rebuilds the server, so it also returns to `defaultProfile`
+- the runtime selection is still not persisted; switching profiles in the UI lasts only until the next restart or reload
+- selecting "None" in the UI still deactivates profiles for the rest of the process lifetime
+
+This change is deliberately kept small and free of fork-specific assumptions so it can be offered upstream once it has been exercised in production.
+
 ## Scope of this fork
 
-This fork intentionally keeps its public delta small. The two scheduling changes are confined to the legacy `groups:` codepath and do not touch upstream's `matrix:` solver. The admin PIN is a small, optional UI gate; upstream v244 added no new endpoint that exposes captured request or response bodies, so the gate still covers the only surface that does. The goal is to stay close to upstream while carrying a few targeted changes that are useful in deployments still based on `groups:`.
+This fork intentionally keeps its public delta small. The two scheduling changes are confined to the legacy `groups:` codepath and do not touch upstream's `matrix:` solver; they are frozen, will not be re-proposed upstream, and are expected to be removed once `matrix:` has proven itself. The admin PIN is a small, optional UI gate; upstream v244 added no new endpoint that exposes captured request or response bodies, so the gate still covers the only surface that does. The default profile setting is a small additive config option held here as a candidate for a future upstream contribution. The goal is to stay close to upstream while carrying a few targeted changes that are useful in this deployment.
