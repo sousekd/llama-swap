@@ -117,6 +117,7 @@ Current scope:
 - Activity metrics remain visible
 - the protection applies to viewing capture contents from the Activity panel
 - the upstream Performance page and Prometheus `/metrics` endpoint are not gated by the PIN
+- the upstream Hardware page and `/api/hardware` endpoint (added upstream in v247) are not gated by the PIN
 - this is not a full multi-user authentication or role-based access system
 
 Warning:
