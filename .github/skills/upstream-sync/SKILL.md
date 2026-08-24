@@ -1,0 +1,541 @@
+---
+name: upstream-sync
+description: '**WORKFLOW SKILL** — Sync this fork (sousekd/llama-swap) with upstream (mostlygeek/llama-swap) while preserving the fork-only feature commits. USE WHEN the user says "update from upstream", "sync the fork", "pull upstream", "rebase on upstream", "merge upstream vNNN", or asks to release a new fork build that tracks an upstream tag. Covers both small upstream patches and major version bumps. Handles branch layout (main / release/staging / release/stable), archiving, conflict-as-feature replay, validation, README maintenance, force-with-lease promotion, and branch cleanup. DO NOT USE FOR: routine bug fixes that do not involve upstream, dependency bumps, or local feature work.'
+---
+
+# Upstream Sync
+
+A repeatable, low-risk procedure for advancing this fork onto a newer `upstream/main` while preserving the small set of fork-only commits.
+
+> **Mental model.** The fork is a thin, public delta on top of `upstream/main`. A sync is "rebuild the delta on top of a newer base, prove it still works, then move the public branch pointers atomically".
+
+## What you must know before starting
+
+This skill assumes **zero prior context**. Read this section in full before touching the repo.
+
+### Repository identity
+
+- **Fork remote (`origin`)**: `sousekd/llama-swap`
+- **Upstream remote (`upstream`)**: `mostlygeek/llama-swap`
+- The `upstream` remote is intentionally restricted to its `main` branch only. The fetch refspec must be `+refs/heads/main:refs/remotes/upstream/main`. If it isn't, fix it with `git remote set-branches upstream main` before doing anything else. Never push to `upstream`. Never create or modify any `upstream/*` ref.
+
+### Long-lived branches
+
+| Branch            | Role                                                                                          | Force-push allowed?              |
+| ----------------- | --------------------------------------------------------------------------------------------- | -------------------------------- |
+| `main`            | Strict mirror of `upstream/main`. Never carries fork commits. Always fast-forwarded.          | No. Fast-forward only.           |
+| `release/staging` | Integration branch: `upstream/main` + the fork-only commits. Used for testing.                | Yes, with `--force-with-lease`.  |
+| `release/stable`  | Promoted, deployable state. Moves forward from `release/staging` only after explicit sign-off.| Yes, with `--force-with-lease`.  |
+
+Anything else (e.g. `sync/upstream-vNNN`, `candidate/*`, `test/*`, `open-pr/*`, `local/*`) is temporary scaffolding and should be deleted once its job is done. Keep `open-pr/*` branches only while the upstream PR is open. `pr/*` is a local tag namespace, not a branch namespace.
+
+### Fork-only commits (the "delta")
+
+The fork delta is **never hard-coded**. It drifts as features are added, removed, or upstreamed. Discover it fresh on every sync — the answers come from three sources, in this order:
+
+1. **`README.md` of the fork** is the authoritative human-readable description of what this fork adds on top of upstream. Read it first; it tells you *what the features are* and *why they exist*.
+2. **`git log --oneline main..release/staging`** is the authoritative machine-readable replay set. Each commit is one fork feature (or a follow-up to one). Subjects, bodies, and per-commit diffs are your spec.
+3. **`git log -p main..release/staging -- <path>`** narrows the spec to a single subsystem when you need to understand *how* a feature was implemented before re-applying it.
+
+From these three sources, build a mental model per commit: *what user-visible behavior does this commit add, which subsystems does it touch, and what would "the same feature on the new upstream" look like?* Do this **before** cherry-picking, not during a conflict.
+
+Do not assume the file footprint of a feature is stable across upstream versions — upstream regularly renames, relocates, or restructures files. The README + commit-body pair tells you *intent*; the new upstream code tells you *where intent now belongs*.
+
+### Conventions baked into this workflow
+
+- **Tag before rewriting.** Every sync first creates an annotated tag `fork-pre-vNNN` on the current `release/staging` and pushes it. That tag is the only ref that needs an explicit rollback point, because `release/staging` is the only branch that gets force-rewritten (`main` fast-forwards, `release/stable` is left alone). Pre-sync tags are permanent.
+- **Cherry-pick one commit at a time and validate after each.** This isolates conflicts and keeps test signal clean.
+- **Conflicts are features, not patches.** When upstream has moved, renamed, or restructured the surrounding code, re-implement the fork commit's *intent* (as captured by its message and the README) on the new code, then commit with the original message. Do not "improve" upstream code while reintegrating.
+- **Files may have moved.** Cherry-picks that touch a relocated file produce "deleted by us / modified by them" conflicts. Find the new path with `git log --follow -- <old-path>` or `git log --diff-filter=R --name-status main` and reapply the change at the new location.
+- **Force-pushing**: only ever `--force-with-lease`, never `--force`.
+- **`release/stable` is never auto-promoted.** Promotion is a separate, explicit decision by the maintainer.
+- **No unrelated refactors during a sync.** Minimal, tightly-scoped changes only.
+- **GitHub contributions are human-owned.** Follow the current upstream `CONTRIBUTING.md`: an agent may prepare branches, diffs, validation facts, and a review checklist, but it must not write, create, close, or comment on issues or pull requests. The maintainer performs those actions.
+- **Never commit, push, or open a PR past a review checkpoint without explicit human approval.** See *Workflow shapes* below.
+
+### Commit categories
+
+There are exactly two categories. The category lives on the commit subject so `git log --oneline` is self-classifying.
+
+| Category | Subject style | Used for |
+| --- | --- | --- |
+| Upstream-style code (default) | `area: summary` (e.g. `proxy: …`, `ui: …`, `perf: …`) | Every code change. Body is honest about limitations; no fork-internal references; no `fixes #` to private trackers. |
+| Fork-only docs/meta | `fork-docs: summary` | Fork README, this SKILL, sync notes, lessons learned, anything that only makes sense inside this fork. Free-form body. |
+
+Rules:
+
+- **Upstream voice is the default for code.** Even if you have no plan to upstream a particular patch, write it as if you might. The PIN feature is in-tree as a regular code commit with a body that names its known limitation; that is the model.
+- **`fork-docs:` is a hard signal.** A future sync agent skimming `git log` should be able to ignore everything `fork-docs:` when reasoning about what would land in an upstream PR.
+- **Tags are PR-prep markers, not category markers.** When you actually decide to prepare an upstream PR for a commit, add a local-only `pr/<short-name>` Git tag pointing at it. Most code commits will have no tag, and that's fine. `pr/*` tags are never pushed.
+- **Upstream-candidate feature branches use `candidate/`.** When a feature may be proposed upstream, implement and commit it on a branch from `main` named `candidate/<short-name>`. The commit must stand on upstream alone before it is mixed with fork-only commits.
+- **Fork test branches use `test/`.** When an upstream-candidate feature needs real-world testing with the fork's full delta, create `test/<short-name>` from the candidate branch and replay the current fork delta on top of it. Push these branches to `origin` only for testing; do not open upstream PRs from them.
+- **Live upstream PR branches use `open-pr/`.** When you push a branch solely to open or update an upstream PR, name it `open-pr/<short-name>`. These branches start from `main` or from a reviewed `candidate/<short-name>` branch, never from `release/staging`, and contain only the upstream-submission commits. Keep them alive while the PR is open and delete them after the PR is merged or closed.
+- **One-off convention adoption** was performed at the `fork-pre-convention-adoption` annotated tag — metadata-only history rewrite, no working-tree change. Future syncs replay commits *with* the prefixes already in place.
+
+### Workflow shapes
+
+Each kind of work has its own shape, but both end at the same publish path and both have a mandatory review checkpoint where the agent stops and waits.
+
+- **Sync** — fetch upstream, fast-forward `main`, build integration branch, replay fork delta, validate. **Sync-review checkpoint** (see Phase 5.5). Then publish (Phase 6+).
+- **Fork-only feature** — edit working tree on `release/staging` (or a short-lived branch off it), validate. **Feature-review checkpoint** (see Phase 5.5 — same checkpoint, different surface). Then commit with the right category prefix and publish.
+- **Upstream-candidate feature** — create `candidate/<short-name>` from `main`, implement and validate the feature there, then stop at the **Feature-review checkpoint**. For fork testing, create `test/<short-name>` from the candidate branch and replay the current fork delta on top, smoke-test, and promote `release/staging` to the tested tip. See *Upstream-candidate feature workflow* below for the full mechanics (iteration via `rebase --onto`, optional worktree isolation, promotion, cleanup). If the feature is later submitted upstream, prepare `open-pr/<short-name>` from the candidate branch; the maintainer writes and opens the PR. If upstream merges it, advance `main` and replay only the remaining fork delta into `release/staging`; do not keep a duplicate fork commit for the merged feature. If the change is rejected upstream or never submitted, document it in the fork `README.md` before deleting the candidate branch.
+- **Combined** (sync + small feature in one batch) — sync to integration branch, apply feature edits on top *uncommitted*, then a single review checkpoint covers both before commit/publish.
+
+At every checkpoint the agent: prints the relevant `git log`/`git diff`/`git status`/`git tag --list 'pr/*'` summary, optionally pushes the integration branch (no PR), and **stops**. It does not commit-finalize, write or operate a pull request, or force-push staging until the user explicitly says continue.
+
+### Known noise that is not your problem
+
+Before the sync, capture a baseline of pre-existing warnings on `release/staging`:
+
+```bash
+gofmt -l . > /tmp/pre-sync-gofmt.txt
+staticcheck ./internal/... > /tmp/pre-sync-staticcheck.txt 2>&1 || true
+```
+
+After the sync, diff against the new state. Anything that was already there is upstream's problem and must not be "fixed" as part of a sync. Anything new is yours to address.
+
+Do not hard-code warning counts from an older sync. Treat output as a regression only when it is new relative to the baseline captured from the new upstream tip.
+
+`internal/server/ui_dist/` is gitignored on working branches; the release pipeline regenerates it. Never commit it from a sync.
+
+## Decision: minor sync vs major sync
+
+Gather facts first:
+
+```bash
+git fetch upstream --prune --tags
+git log --oneline upstream/main ^main                          # what upstream added
+git diff --stat main..upstream/main                            # where upstream changed things
+git tag --merged upstream/main --sort=-v:refname | head -5     # find candidate vNNN
+
+# Compute the set of files the fork delta touches, then intersect with upstream's diff:
+FORK_FILES=$(git diff --name-only main release/staging)
+echo "$FORK_FILES" | xargs -I{} git diff --name-status main..upstream/main -- {}
+```
+
+The last command tells you exactly which fork-touched files upstream also changed (or renamed). Empty output → expect a clean cherry-pick run. Non-empty output → expect real conflict work on the listed files.
+
+- **Minor sync** — the intersection above is empty or trivial. Cherry-picking should be conflict-free.
+- **Major sync** — the intersection lists meaningful files, *or* upstream tagged a new version, *or* upstream renamed/moved any file the fork touched. Expect conflicts and apply the "features, not patches" rule.
+
+The phases below are identical for both cases; only the conflict-handling step differs in effort.
+
+## The sync, phase by phase
+
+> Throughout the rest of this document, `vNNN` is a placeholder for the upstream version label. Pick it from the freshest piece of upstream identity available, in this preference order:
+>
+> 1. The latest upstream **tag** merged into `upstream/main` (e.g. `v211`, `v212`).
+> 2. If upstream has commits past the latest tag, append the count: `<latest-tag>-plus-<N>` (e.g. `v211-plus-4`). Compute `N` with `git rev-list --count <latest-tag>..upstream/main`.
+> 3. If there is no upstream tag at all, use the upstream short SHA: `sha-<7-char>`.
+>
+> The label only needs to be unique within this fork's tags and informative at a glance — do not invent free-form names like "big-update" or "merge-2".
+
+### Phase 0 — Preflight
+
+1. Working tree is clean: `git status --short --branch`. Stash or commit anything pending.
+2. Confirm remotes and pinned upstream tracking:
+   ```bash
+   git remote -v
+   git config --get-all remote.upstream.fetch
+   ```
+   The upstream fetch refspec must be `+refs/heads/main:refs/remotes/upstream/main`. Fix with `git remote set-branches upstream main` if not.
+3. Read `AGENTS.md` for repo-wide conventions (commit message style, test commands, code-review rubric).
+4. Fetch: `git fetch upstream --prune` and `git fetch origin --prune`.
+
+### Phase 1 — Tag the current `release/staging`
+
+Create a single annotated rollback tag and push it. `release/staging` is the only branch this sync will rewrite; `main` will only fast-forward and `release/stable` is left alone, so they don't need separate snapshots.
+
+```bash
+TAG=vNNN
+git tag -a "fork-pre-$TAG" release/staging \
+  -m "release/staging state immediately before syncing onto upstream $TAG"
+git push origin "fork-pre-$TAG"
+```
+
+If something goes wrong later, `git reset --hard fork-pre-$TAG` restores the pre-sync state of `release/staging` exactly. Do not skip this phase, even for "trivial" syncs.
+
+### Phase 2 — Advance `main`
+
+`main` is a strict mirror of `upstream/main`. Always fast-forward; never merge.
+
+```bash
+git checkout main
+git merge --ff-only upstream/main
+git push origin main
+```
+
+If a fast-forward is impossible, somebody committed onto `main` that should not have. **Stop and investigate** before proceeding.
+
+### Phase 3 — Build a sync integration branch
+
+Create a throwaway branch from the new `main` and replay the fork commits.
+
+```bash
+git checkout -b "sync/upstream-$TAG"
+```
+
+Identify the replay set — do not hard-code SHAs:
+
+```bash
+git log --oneline release/staging..main           # should be empty after Phase 2
+git log --oneline main..release/staging           # the fork commits to replay (oldest last)
+# also visible from the tag: fork-pre-$TAG
+```
+
+Cherry-pick **one commit at a time, in original (oldest-first) order**, validating after each:
+
+```bash
+git cherry-pick <SHA-1>
+# run focused tests for that commit (see Phase 4)
+git cherry-pick <SHA-2>
+# run focused tests
+# ...continue
+```
+
+After the last cherry-pick, sanity-check that nothing was dropped:
+
+```bash
+diff <(git log --format=%s "fork-pre-$TAG" ^main) \
+     <(git log --format=%s HEAD ^main)
+```
+
+The two commit-subject lists must match (order included) unless the sync intentionally drops, replaces, or consolidates commits. In that case, record the expected old-to-new mapping before replay and verify that the final list differs by exactly that mapping.
+
+#### Conflict handling
+
+- **Trivial conflicts** (whitespace, nearby edits): resolve, `git add`, `git cherry-pick --continue`. The reapplied logic must be semantically identical to the original commit. Compare against the pre-sync tag when in doubt:
+  ```bash
+  git diff "fork-pre-$TAG" -- <file>
+  ```
+- **Non-trivial conflicts** (upstream rewrote the surrounding code, replaced a subsystem, etc.): treat the fork commit as a *feature spec*. Re-implement the feature on top of the new upstream code, then commit with the original commit message. Do not bundle unrelated changes.
+- **File renamed/moved by upstream** ("deleted by us / modified by them" or vice versa): find the new location (`git log --follow -- <old-path>` or `git log --diff-filter=R --name-status main`), apply the fork change there, `git add` both the deletion and the new file, then `git cherry-pick --continue`.
+- **Feature obsoleted upstream**: if upstream now solves the same problem natively, skip the fork commit (`git cherry-pick --skip`) and explicitly note it in the README and sync audit. Do not silently drop it.
+- **Dependency changes**: if upstream changed `go.mod`/`go.sum`, run `go mod tidy` once after all cherry-picks complete and commit the result as `chore: go mod tidy after upstream $TAG sync` only if it produces a real diff. If `ui/package-lock.json` changed upstream, run `npm ci` (not `npm install`) before any UI tests.
+
+### Phase 4 — Validate
+
+Validate progressively: focused tests after each cherry-pick, full suite once all commits are applied.
+
+#### Focused tests per fork commit
+
+Derive the test set from the commit itself — do not rely on a hard-coded list. For each cherry-picked commit:
+
+1. Inspect what it changed:
+   ```bash
+   git show --stat HEAD
+   ```
+2. Pick the smallest test invocation that exercises the changed code:
+   - Go: any new or modified `Test*` functions in the diff are the obvious targets. Run them with `go test -v -run '^TestName1|TestName2$' ./<package>/...`. If the commit only changed non-test Go code, run the test files in the same package: `go test -v ./<package>/...`.
+  - UI (`ui/`): run `npm run check` for type/syntax regressions, plus `npm test -- <pattern>` if the commit added or modified test files.
+3. Fix any failure **before** the next cherry-pick. Do not stack commits on a failing branch.
+
+If you cannot identify focused tests for a commit (e.g. a pure docs commit), say so and skip to the full pass.
+
+#### Full validation pass (once at the end)
+
+On Linux/macOS, the project's Makefile is the canonical entry point:
+
+```bash
+gofmt -l .                       # must print nothing new vs. baseline
+make test-dev                    # go test + staticcheck (internal/ scope)
+make test-all                    # adds long-running concurrency tests
+go build ./...
+
+cd ui
+npm ci                           # only if package-lock.json changed
+make test-ui                     # or: npm run check && npm test
+npm run build                    # also refreshes internal/server/ui_dist
+cd ..
+```
+
+Compare `staticcheck`/`gofmt` output against the baseline you captured at the start (see *Known noise that is not your problem*). Anything new is yours; anything pre-existing stays.
+
+If any focused test fails after a cherry-pick, **fix it before the next cherry-pick**. Do not stack additional commits on a failing branch.
+
+If tests complain about a missing helper binary, build whatever they ask for under `cmd/` (the test failure usually names the path). The build command is `go build -o <path> ./cmd/<name>` (with a `.exe` suffix on Windows).
+
+### Phase 5 — Reconcile fork features with new upstream surface
+
+Before touching the README, walk through each meaningful new or substantially-changed upstream feature (use `git log --oneline main..HEAD` against the new `main`, plus `git log -p` on anything that looks relevant) and ask:
+
+> Does this new upstream feature interact with, overlap with, or undermine any fork feature documented in `README.md`?
+
+Think in terms of **categories of interaction**, not specific examples:
+
+- **Surface overlap** — upstream now exposes something the fork already exposes. Does the fork's variant still add value? Should it be deprecated, scoped, or removed?
+- **Gating gaps** — the fork added an access-control or scoping mechanism. Does any new upstream surface bypass it? If so, extend the mechanism to cover the new surface.
+- **Schema/config drift** — upstream extended a config struct/schema the fork also extended. Make sure both extensions still co-exist and validate.
+- **UI duplication or inconsistency** — upstream added a UI control that conflicts visually or semantically with a fork-added one. Reconcile.
+- **Obsoleted feature** — upstream now solves what a fork commit solved. Skip the commit, document the change.
+
+If integration work is needed, add it as a **new, separately-named commit** on the integration branch (not as an amendment to a replayed fork commit). It becomes a new permanent member of the fork delta and will be replayed by future syncs. New code commits use the upstream-style subject; new docs/notes commits use `fork-docs:`.
+
+Then update `README.md` so it accurately describes the post-sync state. Minimal edits only. The README is itself part of the fork delta and its replayed commit may need a small follow-up. Any README change here is a `fork-docs:` commit.
+
+### Phase 5.5 — Review checkpoint (mandatory pause)
+
+This is the explicit "hand control back to the human" point. The agent must reach this checkpoint with everything ready *but nothing finalized*:
+
+- Replay/feature commits exist on the integration branch (or, for a Feature flow that didn't rebase, are present in the working tree uncommitted).
+- All validation from Phase 4 is green.
+- README/SKILL edits, if any, are committed on the integration branch with `fork-docs:` prefix; one-line follow-up tweaks may instead be left uncommitted in the working tree, the user's choice.
+- Optionally `git push -u origin sync/upstream-vNNN` so the maintainer can review the diff in the GitHub UI. Do not write or open a traceability PR.
+
+The agent prints:
+
+```bash
+git log --oneline main..HEAD
+git diff --stat main..HEAD
+git status --short --branch
+git tag --list 'pr/*'
+```
+
+plus a one-paragraph summary of *what changed and why*, then **stops and waits for the user to type continue (or to ask for revisions)**. The agent does not:
+
+- commit-finalize anything left uncommitted,
+- reset `release/staging`,
+- write or operate the traceability PR,
+- force-push,
+- push any tag.
+
+For a Feature flow with no Sync, the same checkpoint applies — the surface is `git status -sb` + `git diff` rather than `git log main..HEAD`, but the rule is identical: stop, summarize, wait.
+
+### Phase 6 — Promote `release/staging`
+
+Once the integration branch is fully green and the README is accurate:
+
+```bash
+git checkout release/staging
+git reset --hard "sync/upstream-$TAG"
+git push --force-with-lease origin release/staging
+```
+
+`--force-with-lease` is mandatory; never `--force`. The `fork-pre-$TAG` tag from Phase 1 is your safety net.
+
+### Phase 7 — `release/stable` promotion (only if explicitly requested)
+
+When (and only when) the maintainer asks to ship:
+
+```bash
+git checkout release/stable
+git merge --ff-only release/staging   # preferred path
+# If FF is impossible because release/staging history was rewritten:
+git reset --hard release/staging
+git push --force-with-lease origin release/stable
+```
+
+If the user has not asked to promote stable, leave `release/stable` alone and tell them it is still pointing at the previous version.
+
+### Phase 8 — Branch cleanup
+
+After a successful sync, the only durable branches that should exist on `origin` are:
+
+- `main`, `release/staging`, `release/stable`
+- All `fork-pre-vNNN` tags from this and previous syncs (these are the historical record of pre-sync states)
+
+Delete the temporary integration branch (locally and on `origin` if it was pushed):
+
+```bash
+git branch -D "sync/upstream-$TAG"
+git push origin --delete "sync/upstream-$TAG"   # only if it was pushed
+```
+
+For other stray branches (`pr/*`, `local/*`, abandoned feature branches), confirm their content is preserved either in a tag or in integrated history, then:
+
+```bash
+git branch -D <name>                         # local
+git push origin --delete <name>              # remote
+```
+
+Prune stale remote-tracking refs:
+
+```bash
+git fetch --prune origin
+git fetch --prune upstream
+git remote prune origin
+```
+
+**Never** delete or rename anything under `refs/remotes/upstream/`. **Never** delete `fork-pre-*` tags created by previous syncs.
+
+### Phase 9 — Human-owned traceability PR
+
+After the Phase 5.5 review checkpoint, the maintainer may open a fork-internal PR from the integration branch into `release/staging` before the Phase 6 reset. This is standard practice for sync runs and feature work that introduces or changes code.
+
+It is **not required** for changes that are purely fork-only metadata (e.g. a `fork-docs:` README tweak, a SKILL edit, a Lessons-learned addition) and produce no functional delta. A reasonable rule of thumb: if `git diff main..HEAD -- ':!.github/skills' ':!README.md'` is empty *and* every commit in the range is `fork-docs:`-prefixed, skip the PR.
+
+The PR is the permanent, reviewable record of:
+
+- which upstream commits were absorbed,
+- how each fork commit was reapplied (verbatim, conflict-resolved, or rewritten),
+- any reconciliation commits added,
+- anything skipped or deprecated.
+
+The agent may supply the branch, command output, changed-commit mapping, and a factual review checklist. It must not draft or create the PR. The maintainer writes and opens it. Self-approval is blocked on GitHub, so the PR is for visibility, not gating. Closing it via the Phase 6 reset is normal and expected; the PR survives in the repo's PR history as the audit trail.
+
+## Upstream-candidate feature workflow
+
+For changes that *might* be proposed upstream, do the development work on a clean candidate branch and integrate-test it against the fork delta on a separate branch. This keeps the upstream-submittable commits free of fork-only context while still proving the change works in the fork's real environment.
+
+> **Mental model.** `candidate/<name>` is what you would send upstream; `test/<name>` is candidate plus the current fork delta, used purely to smoke-test the change inside the fork. `release/staging` is promoted to the tested `test/<name>` tip after the smoke pass.
+
+This workflow is for tightly-scoped features that may be upstreamable. For broad upstream re-bases, use the sync phases above instead.
+
+### Phase C0 — Set up the two branches
+
+```bash
+git fetch origin --prune
+git fetch upstream --prune
+
+# Upstream-clean development branch, based on upstream/main (mirrored by local main).
+git checkout -b candidate/<name> main
+# implement and commit the feature here using upstream-voice subjects (area: summary)
+git push -u origin candidate/<name>
+```
+
+Then build the test branch by replaying the current fork delta on top. Doing this in a separate worktree keeps iteration on `candidate/<name>` (in the main worktree) decoupled from the test branch's `node_modules`, editor state, and validation runs:
+
+```bash
+git worktree add ../llama-swap-test-<name> -b test/<name> candidate/<name>
+cd ../llama-swap-test-<name>
+
+# Replay the entire current fork delta (main..release/staging) onto candidate/<name>.
+# Use rebase --onto when the delta is known to apply cleanly:
+git rebase --onto candidate/<name> main release/staging
+# Or cherry-pick one commit at a time (validate after each) when conflicts are likely.
+
+git push -u origin test/<name>
+```
+
+The separate worktree is a convenience, not a requirement. Without it, the same workflow requires a `git checkout` between every candidate edit and every test validation, which breaks editor state.
+
+### Phase C1 — Iterate
+
+All feature work happens on `candidate/<name>` in the main worktree:
+
+- **Prefer amending trivial follow-ups** (whitespace, single-line fixes, polish, message tweaks) into the existing candidate commit. Stacking three "tweak" commits before the PR is opened is noise the eventual upstream PR has to apologize for.
+- After amending (or adding a real new commit), push with `--force-with-lease`:
+  ```bash
+  git push --force-with-lease origin candidate/<name>
+  ```
+- **Save the previous candidate tip SHA before amending** (`git rev-parse HEAD` into a shell variable, or `git reflog` after the fact). The next step needs it.
+
+Then bring the test branch forward in the test worktree:
+
+```bash
+cd ../llama-swap-test-<name>
+git fetch origin --prune
+git rebase --onto candidate/<name> "$OLD_CANDIDATE_TIP" test/<name>
+# validate: npm run check && npm test && npm run build, plus any focused Go tests
+git push --force-with-lease origin test/<name>
+```
+
+If validation fails on the rebased test branch but the candidate itself is correct, the problem is the fork delta's interaction with the candidate. Fix it as a **new fork-delta commit on `test/<name>`** (upstream-style subject if the fix could itself be upstreamed, `fork-docs:` if it is documentation). Do not push the fix into the candidate commits unless it is genuinely part of what would ship upstream.
+
+### Phase C2 — Promote to `release/staging`
+
+After `test/<name>` smoke-tests cleanly (the maintainer runs it locally or against a real workload — `npm run build` green is not the same thing), promote it. This can be done from any worktree on any branch:
+
+```bash
+git fetch origin --prune
+git branch -f release/staging origin/test/<name>
+git push --force-with-lease origin release/staging
+git branch --set-upstream-to=origin/release/staging release/staging
+```
+
+The final `set-upstream-to` is mandatory — `git branch -f` silently retargets the local branch's upstream to whatever ref you forced it from (`origin/test/<name>`), which then makes routine `git pull`/`git status` reports wrong. Restore it immediately.
+
+No `fork-pre-vNNN` tag is required for candidate promotions: the flow is for small, scoped changes and `release/staging`'s reflog is sufficient as a rollback point. Reach for an annotated `fork-pre-*` tag only if the promotion happens to bundle a large reshape (in which case use the sync flow instead).
+
+A traceability PR is **not** required for a candidate promotion — the candidate branch already lives on `origin` as the reviewable artifact, and `test/<name>` is throwaway scaffolding. The PR rule from Phase 9 still applies to sync runs.
+
+### Phase C3 — Cleanup after smoke pass
+
+Once the maintainer confirms `release/staging` is healthy in real use:
+
+```bash
+git worktree remove ../llama-swap-test-<name>
+git branch -D test/<name>
+git push origin --delete test/<name>
+```
+
+**Keep `candidate/<name>` alive** as long as an upstream PR for it is plausible — it is the clean cherry-pick target for `open-pr/<name>`. Delete it only after one of the following resolves:
+
+- **Upstream merged the candidate.** On the next sync, `main` advances to include the commit and the candidate is dropped from the fork delta automatically. Delete the candidate branch then.
+- **Upstream rejected the candidate, or the change will never be submitted.** Document the feature in the fork `README.md` (and/or a `fork-docs:` note) so future sync agents understand why it is fork-only, then delete the candidate branch — its commits already live on `release/staging` as the canonical record.
+
+Do not delete the candidate branch "because the test branch is gone". Those two branches have different lifetimes by design.
+
+## Quick checklist (TL;DR)
+
+1. Working tree clean. Read `AGENTS.md` and the fork `README.md`. `git fetch upstream --prune --tags`.
+2. Discover the fork delta: `git log --oneline main..release/staging`. Read each commit body. Compute the file overlap with the upstream diff.
+3. Capture a baseline of pre-existing `gofmt`/`staticcheck` output on `release/staging`.
+4. Tag: `git tag -a fork-pre-vNNN release/staging -m '...' && git push origin fork-pre-vNNN`.
+5. Fast-forward `main` to `upstream/main`, push.
+6. Branch `sync/upstream-vNNN` from `main`. Cherry-pick `main..release/staging` commits in oldest-first order. Derive focused tests from each commit's diff and run them after each pick. Treat conflicts as features and file renames as relocations. Replay preserves prefixes (`fork-docs:` stays `fork-docs:`); never demote a code commit to `fork-docs:` and never promote a doc commit to upstream voice.
+7. Sanity-check: replayed commit subjects equal the `fork-pre-vNNN..` subject list captured before the sync.
+8. Run `go mod tidy` and `npm ci` if upstream changed deps. Run the full validation pass; only the pre-sync baseline warnings are allowed.
+9. Reconcile fork features with any new/changed upstream surface; add follow-up integration commits if needed (code uses upstream-style subject, docs use `fork-docs:`).
+10. Update `README.md` only where reality changed (`fork-docs:` commit).
+11. **Stop at the review checkpoint (Phase 5.5).** Print the log/diff summary and wait for explicit approval before doing anything in steps 12–14.
+12. If desired, the maintainer writes and opens the traceability PR (skip for a `fork-docs:`-only change with no functional delta).
+13. Reset `release/staging` to the integration branch and `--force-with-lease` push. Delete the temporary branch (local and remote). Leave the `fork-pre-vNNN` tag in place. `pr/*` tags stay local-only.
+14. Do not touch `release/stable` unless explicitly asked.
+
+## Environment-specific notes
+
+The procedure above is shell-agnostic and works on Linux, macOS, and any environment with a recent Git, Go toolchain, Node toolchain, and `gh` CLI. Adjust binary suffixes and path separators as your platform requires.
+
+### Windows + VS Code (the maintainer's environment)
+
+This environment has a few quirks worth knowing:
+
+- The `Makefile` `test-dev` and `test-all` targets use Unix-only commands (`mkdir -p`) and fail on Windows. Substitute these direct commands for the full validation pass:
+  ```powershell
+  .dev/check-go-format.ps1
+  go test -short -count=1 ./internal/...
+  go test -race -count=1 -short ./internal/...
+  staticcheck ./internal/...
+  go build .
+
+  cd ui
+  npm ci          # only if package-lock.json changed
+  npm run check
+  npm test
+  npm run build
+  cd ..
+  ```
+- The `simple-responder` helper used by some tests must be built with the `.exe` suffix:
+  ```powershell
+  go build -o build/simple-responder.exe cmd/simple-responder/simple-responder.go
+  ```
+- PowerShell variable syntax for the tag phase:
+  ```powershell
+  $tag = "vNNN"
+  git tag -a "fork-pre-$tag" release/staging `
+    -m "release/staging state immediately before syncing onto upstream $tag"
+  git push origin "fork-pre-$tag"
+  ```
+- `.dev/` contains private helper scripts (`check-go-format.ps1`, `sync-main.ps1`, etc.) and reference diffs of fork commits. It must not contain a duplicate copy of this skill.
+- VS Code's integrated terminal is PowerShell by default; chain with `;` rather than `&&`, and prefer pipelines over `xargs`.
+
+## Lessons learned
+
+Concise pattern notes from past syncs. Add new entries here when a sync teaches something non-obvious; do not rewrite history.
+
+- **README "wholesale replace" conflicts.** Some fork commits exist solely to *replace* an upstream file (e.g. the fork `README.md`). When git reports conflicts, do not hand-merge upstream's new sections in — resolve with `git checkout <fork-commit-sha> -- <file>` to take the fork version verbatim, then `git cherry-pick --continue`. The whole point of those commits is that they overwrite, not merge.
+- **Classifying new upstream surfaces vs fork access controls.** When upstream adds a new observability/admin surface (Prometheus `/metrics`, performance dashboard, debug endpoints), explicitly decide whether each fork-introduced gate (e.g. admin PIN) extends to it. The default for this fork is *no extension*: PIN protects only the Activity capture bodies; new upstream surfaces stay exposed unless the maintainer says otherwise. Capture the decision in the README in the same sync.
+- **Tag count is absolute, not per-sync.** `vNNN-plus-N` uses `N = git rev-list --count <latest-tag>..upstream/main` measured at sync time, not the count of commits absorbed *this* sync. If `main` was already ahead of the latest upstream tag, `N` will exceed the visible delta and that is correct.
+- **PR auto-merge after promotion is fine.** When `release/staging` is force-pushed to the same SHA as the integration branch's tip and the integration branch is deleted, GitHub marks the open PR as `MERGED` automatically. The traceability artefact survives in PR history, which is exactly what we want; no manual PR close is needed.
+- **Upstreamable fix commits need clean extraction points.** If a sync includes a patch we plan to PR upstream, keep it as a small code-only commit with an upstream-style message, then keep docs/README updates in a separate commit. This preserves a clean cherry-pick target for a later `open-pr/...` branch.
+- **Two categories, no draft tier.** Every code commit is upstream-voice by default; fork-only docs use `fork-docs:`. A previous attempt to introduce a `pr-draft/` tag tier was dropped — "is this PR-ready *enough*?" was a fuzzy judgement and the limitation belongs in the commit body, not in a tag namespace. Tags are PR-prep markers applied at extraction time.
+- **Mandatory review checkpoint.** The agent stops at Phase 5.5 with everything ready but nothing finalized — no commit-finalize of uncommitted edits, no traceability PR, no force-push, no tag push. The user reviews and explicitly says continue. This applies to syncs and to standalone feature work alike.
+- **`git branch -f` retargets upstream tracking silently.** Forcing `release/staging` to `origin/test/<name>` for a candidate promotion sets the local branch's upstream to `origin/test/<name>` as a side-effect, which then makes `git pull` and `git status` reports lie. Always run `git branch --set-upstream-to=origin/release/staging release/staging` immediately after the promotion push.
+- **Save the old candidate tip before amending.** When iterating on `candidate/<name>`, the next step (`git rebase --onto candidate/<name> <old-tip> test/<name>`) needs the pre-amend SHA. Capture it into a shell variable before the amend; pulling it from `git reflog` mid-flow works but is fiddly.
+- **Separate worktree for the test branch.** When actively iterating on a candidate branch while validating the test integration, `git worktree add` for `test/<name>` removes constant branch switching, keeps `node_modules` consistent for the validation worktree, and lets the main worktree stay focused on the upstream-clean commits.
+- **Rehearse a risky replay in a throwaway worktree first.** Before executing a sync that drops or reorders fork commits, run the entire cherry-pick sequence in `git worktree add`-created scratch tree (junction/symlink `node_modules` in so the UI checks work), record the exact conflicting files and hunks, then tear it down. This converts the conflict list from prediction into transcript, and makes the real run mechanical. Did this for v244: predicted conflicts matched byte-for-byte.
+- **Dropping a fork commit conflicts *later* commits on context, not content.** When you deliberately skip a commit during replay (e.g. a feature superseded upstream), subsequent cherry-picks can still conflict because their diff *context lines* reference the skipped code. In the v244 sync, skipping the fork profiles commit made the admin-PIN commit conflict in `AppSidebar.svelte` even though the two features are unrelated. Resolve by keeping only the later commit's own additions and discarding the context that belonged to the skipped commit — do not resurrect the skipped feature to make the patch apply.
+- **Residue greps must exclude identifiers upstream also uses.** After removing a fork feature that upstream reimplemented, grepping for generic names (`setActiveProfile`, `fetchProfiles`, `CreateProfileMiddleware`) produces false positives because upstream's own implementation uses them too. Build the marker list from identifiers *unique to the fork version* (for v244: `EffectiveAliasesFor`, `RealModelNameWithProfile`, `EffectiveRequestName`, `activeProfileName`, `profiles/activate`, `handleAPIListProfiles`, `handleAPIActivateProfile`) and verify the upstream feature is still intact separately.
+- **The "subject lists must match" check is void when intentionally dropping a commit.** The normal post-replay assertion is that the replayed subject list equals the pre-sync list. When a commit is deliberately skipped, the correct assertion becomes: the replayed list equals the pre-sync list *minus exactly the dropped commit, and nothing else*. State the expected count up front so the deviation is auditable rather than alarming.
+- **Issues and PRs belong to the maintainer.** Current upstream contribution rules prohibit agent-written issues and PRs. The agent prepares branches, diffs, validation facts, and a review checklist; the maintainer writes and performs GitHub actions.
