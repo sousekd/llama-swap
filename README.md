@@ -1,8 +1,16 @@
 # llama-swap fork
 
-This repository tracks [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap) with an admin PIN feature. See the upstream repository for installation instructions and general documentation.
+This repository tracks [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap) with a small set of fork features. See the upstream repository for installation instructions and general documentation.
 
 ## Fork changes
+
+### Swap freeze
+
+The snowflake button in the sidebar freezes request-driven model swaps. While it is active, a request that would unload a running model is rejected with HTTP 409. Requests for already running models and loads that do not require an eviction continue normally.
+
+The freeze is runtime-only and resets to off after restart or configuration reload. It does not cancel a swap already in progress, prevent TTL expiry, block manual unloads, or affect shutdown. The control is independent of the admin PIN.
+
+The same state is available through `GET /api/freeze` and can be changed with `PUT /api/freeze` using `{"frozen": true}` or `{"frozen": false}`.
 
 ### Admin PIN lock
 
