@@ -390,6 +390,35 @@ func TestServer_VerifyPin(t *testing.T) {
 	})
 }
 
+func TestServer_APIFreeze(t *testing.T) {
+	local := newStubRouter(nil, "")
+	s := newTestServer(local, newStubRouter(nil, ""))
+
+	request := func(method, body string) (int, bool) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, httptest.NewRequest(method, "/api/freeze", strings.NewReader(body)))
+		var response struct {
+			Frozen bool `json:"frozen"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &response)
+		return w.Code, response.Frozen
+	}
+
+	if code, frozen := request(http.MethodGet, ""); code != http.StatusOK || frozen {
+		t.Fatalf("initial GET: code=%d frozen=%v, want 200 false", code, frozen)
+	}
+	if code, frozen := request(http.MethodPut, `{"frozen":true}`); code != http.StatusOK || !frozen {
+		t.Fatalf("PUT true: code=%d frozen=%v, want 200 true", code, frozen)
+	}
+	if code, frozen := request(http.MethodGet, ""); code != http.StatusOK || !frozen {
+		t.Fatalf("final GET: code=%d frozen=%v, want 200 true", code, frozen)
+	}
+	if code, _ := request(http.MethodPut, "not json"); code != http.StatusBadRequest {
+		t.Fatalf("bad PUT: code=%d, want 400", code)
+	}
+}
+
 func TestServer_APIHardware(t *testing.T) {
 	s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
 	s.hardware = &hw.HardwareSnapshot{
