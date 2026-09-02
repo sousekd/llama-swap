@@ -970,6 +970,7 @@ func TestSendError_MapsSentinelErrors(t *testing.T) {
 		{"no peer model", ErrNoPeerModelFound, http.StatusNotFound},
 		{"no local model", ErrNoLocalModelFound, http.StatusNotFound},
 		{"no router", ErrNoRouterFound, http.StatusNotFound},
+		{"swaps frozen", ErrSwapsFrozen, http.StatusConflict},
 		{"unknown", errors.New("boom"), http.StatusInternalServerError},
 	}
 
