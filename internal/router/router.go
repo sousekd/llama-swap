@@ -37,6 +37,15 @@ type Router interface {
 type LocalRouter interface {
 	Router
 
+	// SwapsFrozen reports whether request-driven swaps are frozen. While
+	// frozen, loading a model that would evict a running model is rejected;
+	// already-running models keep serving.
+	SwapsFrozen() bool
+
+	// SetSwapsFrozen freezes or resumes request-driven swaps. The state is
+	// runtime-only and resets when the router is rebuilt.
+	SetSwapsFrozen(frozen bool)
+
 	// RunningModels returns the current state of every process that is not
 	// stopped or shut down, keyed by model ID.
 	RunningModels() map[string]process.ProcessState

@@ -353,6 +353,17 @@ func (b *baseRouter) Handles(model string) bool {
 	return ok
 }
 
+// SwapsFrozen and SetSwapsFrozen delegate the swap-freeze guard to the
+// scheduler, which owns the per-request eviction policy. The state lives with
+// the scheduler so it applies to every path that can trigger a swap.
+func (b *baseRouter) SwapsFrozen() bool {
+	return b.schedule.SwapsFrozen()
+}
+
+func (b *baseRouter) SetSwapsFrozen(frozen bool) {
+	b.schedule.SetSwapsFrozen(frozen)
+}
+
 func (b *baseRouter) ProcessLogger(modelID string) (*logmon.Monitor, bool) {
 	if p, ok := b.processes[modelID]; ok {
 		return p.Logger(), true
