@@ -397,6 +397,87 @@ func TestFIFO_DisjointSwapsRunInParallel(t *testing.T) {
 	}
 }
 
+func TestFIFO_FreezeSwaps(t *testing.T) {
+	t.Run("rejects eviction before admission", func(t *testing.T) {
+		eff := newFakeEffects()
+		eff.states["a"] = process.StateReady
+		eff.states["b"] = process.StateStopped
+		s := newFIFO(&stubPlanner{evict: map[string][]string{"b": {"a"}}}, eff)
+		s.SetSwapsFrozen(true)
+
+		r := req("b")
+		s.OnRequest(r)
+
+		if err := admitErr(t, r); !errors.Is(err, swaputil.ErrSwapsFrozen) {
+			t.Fatalf("admission err=%v want ErrSwapsFrozen", err)
+		}
+		if got := eff.startsFor("b"); got != 0 {
+			t.Fatalf("StartSwap(b)=%d want 0", got)
+		}
+	})
+
+	t.Run("allows eviction-free load", func(t *testing.T) {
+		eff := newFakeEffects()
+		eff.states["a"] = process.StateReady
+		eff.states["b"] = process.StateStopped
+		s := newFIFO(&stubPlanner{}, eff)
+		s.SetSwapsFrozen(true)
+
+		r := req("b")
+		s.OnRequest(r)
+
+		assertAdmitted(t, r)
+		if got := eff.startsFor("b"); got != 1 {
+			t.Fatalf("StartSwap(b)=%d want 1", got)
+		}
+	})
+
+	t.Run("unfreeze restores eviction", func(t *testing.T) {
+		eff := newFakeEffects()
+		eff.states["a"] = process.StateReady
+		eff.states["b"] = process.StateStopped
+		s := newFIFO(&stubPlanner{evict: map[string][]string{"b": {"a"}}}, eff)
+		s.SetSwapsFrozen(true)
+		s.SetSwapsFrozen(false)
+
+		r := req("b")
+		s.OnRequest(r)
+
+		assertAdmitted(t, r)
+		if got := eff.startsFor("b"); got != 1 {
+			t.Fatalf("StartSwap(b)=%d want 1", got)
+		}
+	})
+
+	t.Run("rejects queued eviction after freeze", func(t *testing.T) {
+		eff := newFakeEffects()
+		eff.states["a"] = process.StateStopped
+		eff.states["b"] = process.StateStopped
+		s := newFIFO(&stubPlanner{evict: map[string][]string{"b": {"a"}}}, eff)
+
+		aReq := req("a")
+		bReq := req("b")
+		s.OnRequest(aReq)
+		s.OnRequest(bReq)
+		assertAdmitted(t, aReq)
+		assertAdmitted(t, bReq)
+
+		s.SetSwapsFrozen(true)
+		eff.states["a"] = process.StateReady
+		s.OnSwapDone(SwapDone{ModelID: "a"})
+
+		if got := eff.errored("b"); got != 1 {
+			t.Fatalf("errored(b)=%d want 1", got)
+		}
+		if got := eff.startsFor("b"); got != 0 {
+			t.Fatalf("StartSwap(b)=%d want 0", got)
+		}
+		if got := s.reserved["b"]; got != 0 {
+			t.Fatalf("reserved[b]=%d want 0", got)
+		}
+	})
+}
+
 // TestFIFO_OverlappingEvictSetsDoNotRunInParallel verifies two swaps with
 // different targets that evict the *same* model do not run concurrently: the
 // second must queue rather than double-evict the shared model. Neither target is
