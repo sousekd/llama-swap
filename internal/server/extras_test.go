@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/mostlygeek/llama-swap/internal/config"
 	"github.com/mostlygeek/llama-swap/internal/logmon"
@@ -69,7 +70,7 @@ func TestServer_FilterAcceptEncoding(t *testing.T) {
 }
 
 func TestServer_BodyCopier_Flush(t *testing.T) {
-	bc := newBodyCopier(httptest.NewRecorder())
+	bc := newBodyCopier(httptest.NewRecorder(), streamFormatDisabled)
 	bc.Write([]byte("data"))
 	bc.Flush()
 	if bc.Status() != http.StatusOK {
@@ -94,7 +95,7 @@ func TestServer_BodyCopier_Hijack(t *testing.T) {
 		defer client.Close()
 		defer server.Close()
 
-		bc := newBodyCopier(&hijackRecorder{httptest.NewRecorder(), server})
+		bc := newBodyCopier(&hijackRecorder{httptest.NewRecorder(), server}, streamFormatDisabled)
 		conn, _, err := bc.Hijack()
 		if err != nil {
 			t.Fatalf("Hijack: %v", err)
@@ -105,7 +106,7 @@ func TestServer_BodyCopier_Hijack(t *testing.T) {
 	})
 
 	t.Run("errors when underlying writer is not a hijacker", func(t *testing.T) {
-		bc := newBodyCopier(httptest.NewRecorder())
+		bc := newBodyCopier(httptest.NewRecorder(), streamFormatDisabled)
 		if _, _, err := bc.Hijack(); err == nil {
 			t.Error("expected error hijacking a non-Hijacker ResponseWriter")
 		}
@@ -114,7 +115,7 @@ func TestServer_BodyCopier_Hijack(t *testing.T) {
 
 func TestServer_BodyCopier_SkipsBufferingOnUpgrade(t *testing.T) {
 	rec := httptest.NewRecorder()
-	bc := newBodyCopier(rec)
+	bc := newBodyCopier(rec, streamFormatDisabled)
 	bc.WriteHeader(http.StatusSwitchingProtocols)
 	bc.Write([]byte("websocket frame bytes"))
 
@@ -123,6 +124,60 @@ func TestServer_BodyCopier_SkipsBufferingOnUpgrade(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != "websocket frame bytes" {
 		t.Errorf("client body = %q, want %q", got, "websocket frame bytes")
+	}
+}
+
+type partialResponseWriter struct {
+	header http.Header
+	n      int
+	err    error
+}
+
+func (w *partialResponseWriter) Header() http.Header { return w.header }
+func (w *partialResponseWriter) WriteHeader(int)     {}
+func (w *partialResponseWriter) Write([]byte) (int, error) {
+	return w.n, w.err
+}
+
+func TestServer_BodyCopier_ObservesChatSSE(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	recorder.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	copier := newBodyCopier(recorder, streamFormatChatCompletions)
+	copier.start = time.Now().Add(-time.Second)
+
+	_, err := copier.Write([]byte("data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n"))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if o := copier.observer; o.firstOutput < time.Second || o.lastOutput != o.firstOutput {
+		t.Fatalf("first/last = %v/%v, want one output observed after 1s", o.firstOutput, o.lastOutput)
+	}
+}
+
+func TestServer_BodyCopier_SkipsIneligibleWrites(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		encoding    string
+		writer      http.ResponseWriter
+	}{
+		{name: "non SSE", contentType: "application/json", writer: httptest.NewRecorder()},
+		{name: "compressed", contentType: "text/event-stream", encoding: "gzip", writer: httptest.NewRecorder()},
+		{name: "short client write", contentType: "text/event-stream", writer: &partialResponseWriter{header: make(http.Header), n: 1}},
+		{name: "client write error", contentType: "text/event-stream", writer: &partialResponseWriter{header: make(http.Header), err: io.ErrClosedPipe}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.writer.Header().Set("Content-Type", test.contentType)
+			test.writer.Header().Set("Content-Encoding", test.encoding)
+			copier := newBodyCopier(test.writer, streamFormatChatCompletions)
+			copier.Write([]byte("data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n"))
+
+			if o := copier.observer; o.firstOutput >= 0 || o.lastOutput >= 0 {
+				t.Fatalf("first/last = %v/%v, want no observed output", o.firstOutput, o.lastOutput)
+			}
+		})
 	}
 }
 
