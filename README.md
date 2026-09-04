@@ -38,6 +38,20 @@ admin PIN.
 The same state is available through `GET /api/freeze` and can be changed with
 `PUT /api/freeze` using `{"frozen": true}` or `{"frozen": false}`.
 
+### Chat stream speed estimates
+
+Branch: `candidate/chat-stream-speed-estimates`
+
+Activity metrics can estimate prompt and generation speeds for streamed Chat
+Completions when the upstream does not report native timing metrics. Estimates
+combine proxy-observed output arrival times with exact token counts from a
+standard final usage chunk; native rates remain preferred per field.
+
+Clients must request `stream_options.include_usage` when their backend does not
+send final usage by default. Buffering and chunk batching affect accuracy, and
+compressed, incomplete, or usage-free streams leave rates unavailable.
+llama-swap does not rewrite requests to enable usage reporting.
+
 ## Fork-only changes
 
 ### Admin PIN lock
