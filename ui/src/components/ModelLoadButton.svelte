@@ -2,6 +2,8 @@
   import type { Model } from "../lib/types";
   import { pendingLoads, onToggleLoad } from "../stores/modelLoad";
   import { Play, PowerOff, Loader2 } from "@lucide/svelte";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
 
   interface Props {
     model: Model;
@@ -14,6 +16,20 @@
   let btnSize = $derived(size === "sm" ? "size-5 rounded-sm" : "size-7 rounded-md");
   let iconSize = $derived(size === "sm" ? "size-3.5" : "size-4");
   let busy = $derived(model.state === "starting" || model.state === "stopping");
+
+  let errorOpen = $state(false);
+  let errorMessage = $state("");
+
+  async function toggle(): Promise<void> {
+    errorOpen = false;
+    try {
+      await onToggleLoad(model);
+    } catch (error) {
+      errorMessage =
+        error instanceof Error && error.message ? error.message : "Failed to update model";
+      errorOpen = true;
+    }
+  }
 </script>
 
 <button
@@ -22,7 +38,7 @@
   title={model.state === "ready" ? "Unload" : $pendingLoads[model.id] ? "Cancel" : "Load"}
   aria-label={model.state === "ready" ? "Unload model" : "Load model"}
   disabled={busy}
-  onclick={() => onToggleLoad(model)}
+  onclick={toggle}
 >
   {#if $pendingLoads[model.id] && model.state === "stopped"}
     <Loader2 class="{iconSize} animate-spin" />
@@ -34,3 +50,17 @@
     <Play class={iconSize} />
   {/if}
 </button>
+
+<Dialog.Root open={errorOpen} onOpenChange={(v) => (errorOpen = v)}>
+  <Dialog.Content class="sm:max-w-[360px]">
+    <Dialog.Header>
+      <Dialog.Title>Model action failed</Dialog.Title>
+      <Dialog.Description class="text-destructive break-words">
+        {errorMessage}
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (errorOpen = false)}>Close</Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
