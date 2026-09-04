@@ -381,6 +381,29 @@ func (s *Server) handleAPIHardware(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleAPIFreeze reports the current swap-freeze state as {"frozen": bool}.
+func (s *Server) handleAPIFreeze(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"frozen": s.local.SwapsFrozen()})
+}
+
+// handleAPISetFreeze enables or disables the swap-freeze guard. The body is
+// JSON {"frozen": bool}; malformed JSON is a 400. The reply echoes the new
+// state.
+func (s *Server) handleAPISetFreeze(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Frozen bool `json:"frozen"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		swaputil.SendResponse(w, r, http.StatusBadRequest, "invalid freeze request")
+		return
+	}
+
+	s.local.SetSwapsFrozen(req.Frozen)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"frozen": s.local.SwapsFrozen()})
+}
+
 // handleAPICapture returns the stored request/response capture for a metric ID.
 func (s *Server) handleAPICapture(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))

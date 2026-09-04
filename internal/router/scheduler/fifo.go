@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/mostlygeek/llama-swap/internal/config"
@@ -38,6 +39,7 @@ type FIFO struct {
 	planner Swapper
 	cfg     config.FifoConfig
 	effects Effects
+	frozen  atomic.Bool
 
 	limits   map[string]int
 	active   map[string]*activeSwap
@@ -72,6 +74,17 @@ func NewFIFO(name string, logger *logmon.Monitor, planner Swapper, cfg config.Fi
 	}
 }
 
+// SwapsFrozen and SetSwapsFrozen control the swap-freeze guard. Unlike the
+// lifecycle methods, these run concurrently with the run loop: Reads and
+// writes go through the atomic flag so no scheduler lock is involved.
+func (s *FIFO) SwapsFrozen() bool {
+	return s.frozen.Load()
+}
+
+func (s *FIFO) SetSwapsFrozen(frozen bool) {
+	s.frozen.Store(frozen)
+}
+
 // OnRequest decides what to do with one incoming ServeHTTP request. It never
 // blocks indefinitely: any work that has to wait (starting a process, stopping
 // siblings, waiting for ready) is deferred to a swap goroutine and reported back
@@ -100,6 +113,18 @@ func (s *FIFO) OnRequest(req HandlerReq) {
 		return
 	}
 
+	var running []string
+	var evict []string
+	if _, active := s.active[req.Model]; !active {
+		running = s.runningSet(req.Model)
+		evict = s.planner.EvictionFor(req.Model, running)
+		if s.SwapsFrozen() && len(evict) > 0 {
+			s.logger.Debugf("%s: rejecting request for model %s because swaps are frozen", s.name, req.Model)
+			s.rejectAdmission(req, swaputil.ErrSwapsFrozen)
+			return
+		}
+	}
+
 	if !s.admit(req) {
 		return
 	}
@@ -110,9 +135,6 @@ func (s *FIFO) OnRequest(req HandlerReq) {
 		sw.waiters = append(sw.waiters, req)
 		return
 	}
-
-	running := s.runningSet(req.Model)
-	evict := s.planner.EvictionFor(req.Model, running)
 
 	// (3) Fast path: ready, nothing to evict, and nobody is evicting us.
 	if state == process.StateReady && len(evict) == 0 && !collidesWith(req.Model, evict, s.active) {
@@ -369,6 +391,11 @@ func (s *FIFO) limit(modelID string) int {
 // the set EvictionFor saw, forwarded to OnSwapStart so the planner logs against
 // the same picture it decided on.
 func (s *FIFO) startSwap(initial HandlerReq, evict, running []string) {
+	if s.SwapsFrozen() && len(evict) > 0 {
+		s.logger.Debugf("%s: rejecting request for model %s because swaps became frozen", s.name, initial.Model)
+		s.grantError(initial, swaputil.ErrSwapsFrozen)
+		return
+	}
 	s.active[initial.Model] = &activeSwap{
 		modelID: initial.Model,
 		evict:   evict,
@@ -420,6 +447,11 @@ func (s *FIFO) drainQueue() {
 		}
 		running := s.runningSet(req.Model)
 		evict := s.planner.EvictionFor(req.Model, running)
+		if s.SwapsFrozen() && len(evict) > 0 {
+			s.logger.Debugf("%s: rejecting queued request for model %s because swaps are frozen", s.name, req.Model)
+			s.grantError(req, swaputil.ErrSwapsFrozen)
+			continue
+		}
 		if state == process.StateReady && len(evict) == 0 && !collidesWith(req.Model, evict, s.active) {
 			s.logger.Debugf("%s: queued request for model %s now served fast-path", s.name, req.Model)
 			s.grantHandler(req, req.Model)
