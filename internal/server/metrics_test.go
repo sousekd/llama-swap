@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"math"
@@ -73,7 +75,7 @@ func TestServer_ProcessStreamingResponse(t *testing.T) {
 	body := []byte("data: {\"choices\":[{}]}\n\n" +
 		"data: {\"usage\":{\"prompt_tokens\":15,\"completion_tokens\":33}}\n\n" +
 		"data: [DONE]\n\n")
-	entry, err := processStreamingResponse("m", time.Now(), body)
+	entry, err := processStreamingResponse("m", time.Now(), body, nil)
 	if err != nil {
 		t.Fatalf("processStreamingResponse: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestServer_ProcessStreamingResponse_VLLMMetrics(t *testing.T) {
 
 data: [DONE]
 `)
-	entry, err := processStreamingResponse("m", time.Now(), body)
+	entry, err := processStreamingResponse("m", time.Now(), body, nil)
 	if err != nil {
 		t.Fatalf("processStreamingResponse: %v", err)
 	}
@@ -157,7 +159,7 @@ data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":11
 
 data: [DONE]
 `)
-	entry, err := processStreamingResponse("m", time.Now(), body)
+	entry, err := processStreamingResponse("m", time.Now(), body, nil)
 	if err != nil {
 		t.Fatalf("processStreamingResponse: %v", err)
 	}
@@ -181,8 +183,230 @@ func TestServer_ParseMetrics_TimingsDraftTokensNotOverwritten(t *testing.T) {
 }
 
 func TestServer_ProcessStreamingResponse_NoData(t *testing.T) {
-	if _, err := processStreamingResponse("m", time.Now(), []byte("data: [DONE]\n\n")); err == nil {
+	if _, err := processStreamingResponse("m", time.Now(), []byte("data: [DONE]\n\n"), nil); err == nil {
 		t.Fatal("expected error for stream with no usage data")
+	}
+}
+
+func TestServer_ProcessStreamingResponse_ObservedRates(t *testing.T) {
+	stream := func(final string) []byte {
+		return []byte("data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n" +
+			"data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"two\"}}]}\n\n" + final + "\n\ndata: [DONE]\n\n")
+	}
+	finalUsage := `data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":2}}}`
+	observed := &streamRateObserver{format: streamFormatChatCompletions, firstOutput: 200 * time.Millisecond, lastOutput: 700 * time.Millisecond}
+	singleWrite := &streamRateObserver{format: streamFormatChatCompletions, firstOutput: 200 * time.Millisecond, lastOutput: 200 * time.Millisecond}
+
+	tests := []struct {
+		name       string
+		body       []byte
+		observer   *streamRateObserver
+		wantPrompt float64
+		wantOutput float64
+	}{
+		{name: "estimates both rates", body: stream(finalUsage), observer: observed, wantPrompt: 40, wantOutput: 8},
+		{name: "disabled format", body: stream(finalUsage), observer: nil, wantPrompt: -1, wantOutput: -1},
+		{name: "missing final usage", body: stream(`data: {"object":"chat.completion.chunk","choices":[{"delta":{}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`), observer: observed, wantPrompt: -1, wantOutput: -1},
+		{name: "usage without standard object", body: stream(`data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}`), observer: observed, wantPrompt: -1, wantOutput: -1},
+		{name: "one observed write", body: stream(finalUsage), observer: singleWrite, wantPrompt: 40, wantOutput: -1},
+		{name: "unknown cache", body: stream(`data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}`), observer: observed, wantPrompt: 50, wantOutput: 8},
+		{name: "excessive cache", body: stream(`data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":12}}}`), observer: observed, wantPrompt: -1, wantOutput: 8},
+		{name: "one output token", body: stream(`data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":1}}`), observer: observed, wantPrompt: 50, wantOutput: -1},
+		{name: "zero output tokens", body: stream(`data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":0}}`), observer: observed, wantPrompt: 50, wantOutput: -1},
+		{name: "native rates win", body: stream(`data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":2}},"metrics":{"time_to_first_token_ms":100,"mean_itl_ms":20}}`), observer: observed, wantPrompt: 80, wantOutput: 50},
+		{name: "partial native prompt", body: stream(`data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":2}},"metrics":{"time_to_first_token_ms":100}}`), observer: observed, wantPrompt: 80, wantOutput: 8},
+		{name: "partial native output", body: stream(`data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":2}},"metrics":{"mean_itl_ms":20}}`), observer: observed, wantPrompt: 40, wantOutput: 50},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			entry, err := processStreamingResponse("m", time.Now(), test.body, test.observer)
+			if err != nil {
+				t.Fatalf("processStreamingResponse: %v", err)
+			}
+			if entry.Tokens.PromptPerSecond != test.wantPrompt || entry.Tokens.TokensPerSecond != test.wantOutput {
+				t.Fatalf("rates = %v/%v, want %v/%v", entry.Tokens.PromptPerSecond, entry.Tokens.TokensPerSecond, test.wantPrompt, test.wantOutput)
+			}
+		})
+	}
+}
+
+func TestServer_StreamFormatForPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want streamFormat
+	}{
+		{path: "/v1/chat/completions", want: streamFormatChatCompletions},
+		{path: "/v/chat/completions", want: streamFormatChatCompletions},
+		{path: "/v1/responses", want: streamFormatDisabled},
+		{path: "/v1/chat/completions/", want: streamFormatDisabled},
+	}
+
+	for _, test := range tests {
+		if got := streamFormatForPath(test.path); got != test.want {
+			t.Errorf("streamFormatForPath(%q) = %d, want %d", test.path, got, test.want)
+		}
+	}
+}
+
+func TestMetricsMonitor_RecordObservedStreamRates(t *testing.T) {
+	mm := newTestMetricsMonitor(t, logmon.NewWriter(io.Discard), 10, 0)
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	recorder := httptest.NewRecorder()
+	copier := newBodyCopier(recorder, streamFormatChatCompletions)
+	copier.Header().Set("Content-Type", "text/event-stream")
+	body := []byte("data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n" +
+		"data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"two\"}}]}\n\n" +
+		"data: {\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":2}}}\n\n")
+	copier.Write(body)
+	copier.observer.firstOutput = 200 * time.Millisecond
+	copier.observer.lastOutput = 700 * time.Millisecond
+
+	mm.record("m", r, copier, 0, nil, nil)
+
+	entries := metricsEntries(t, mm)
+	if len(entries) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(entries))
+	}
+	if got := entries[0].Tokens; got.PromptPerSecond != 40 || got.TokensPerSecond != 8 {
+		t.Fatalf("rates = %v/%v, want 40/8", got.PromptPerSecond, got.TokensPerSecond)
+	}
+}
+
+func TestMetricsMonitor_RecordCompressedStreamSkipsObservedRates(t *testing.T) {
+	plain := []byte("data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n" +
+		"data: {\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5},\"metrics\":{\"mean_itl_ms\":20}}\n\n")
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write(plain); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+
+	mm := newTestMetricsMonitor(t, logmon.NewWriter(io.Discard), 10, 0)
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	recorder := httptest.NewRecorder()
+	copier := newBodyCopier(recorder, streamFormatChatCompletions)
+	copier.Header().Set("Content-Type", "text/event-stream")
+	copier.Header().Set("Content-Encoding", "gzip")
+	copier.Write(compressed.Bytes())
+
+	mm.record("m", r, copier, 0, nil, nil)
+
+	entries := metricsEntries(t, mm)
+	if len(entries) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(entries))
+	}
+	got := entries[0].Tokens
+	if got.InputTokens != 10 || got.OutputTokens != 5 {
+		t.Fatalf("tokens = %+v, want input=10 output=5", got)
+	}
+	if got.PromptPerSecond != -1 || got.TokensPerSecond != 50 {
+		t.Fatalf("rates = %v/%v, want unavailable prompt and native output 50", got.PromptPerSecond, got.TokensPerSecond)
+	}
+}
+
+func TestServer_MetricsMiddleware_StreamRateFormats(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		requestBody  string
+		stream       bool
+		wantEstimate bool
+	}{
+		{name: "v1 chat", path: "/v1/chat/completions", requestBody: `{"model":"m"}`, stream: true, wantEstimate: true},
+		{name: "v chat", path: "/v/chat/completions", requestBody: `{"model":"m"}`, stream: true, wantEstimate: true},
+		{name: "upstream chat", path: "/upstream/m/v1/chat/completions", requestBody: `{}`, stream: true, wantEstimate: true},
+		{name: "responses SSE", path: "/v1/responses", requestBody: `{"model":"m"}`, stream: true},
+		{name: "non-streaming chat", path: "/v1/chat/completions", requestBody: `{"model":"m"}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mm := newTestMetricsMonitor(t, logmon.NewWriter(io.Discard), 10, 0)
+			cfg := config.Config{Models: map[string]config.ModelConfig{"m": {}}}
+			handler := CreateMetricsMiddleware(mm, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !test.stream {
+					w.Header().Set("Content-Type", "application/json")
+					w.Write([]byte(`{"usage":{"prompt_tokens":10,"completion_tokens":5}}`))
+					return
+				}
+				// Backdate the start so the first write has a non-zero elapsed time.
+				w.(*responseBodyCopier).start = time.Now().Add(-time.Second)
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.Write([]byte("data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n"))
+				w.Write([]byte("data: {\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\n"))
+			}))
+
+			r := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.requestBody))
+			r.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(httptest.NewRecorder(), r)
+
+			entries := metricsEntries(t, mm)
+			if len(entries) != 1 {
+				t.Fatalf("want 1 entry, got %d", len(entries))
+			}
+			gotEstimate := entries[0].Tokens.PromptPerSecond > 0
+			if gotEstimate != test.wantEstimate {
+				t.Fatalf("PromptPerSecond = %v, want estimate %t", entries[0].Tokens.PromptPerSecond, test.wantEstimate)
+			}
+		})
+	}
+}
+
+func TestServer_ClassifyChatStreamEvent(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+		want streamEventFlags
+	}{
+		{name: "content", json: `{"object":"chat.completion.chunk","choices":[{"delta":{"content":"hello"}}]}`, want: streamEventOutput},
+		{name: "reasoning content", json: `{"object":"chat.completion.chunk","choices":[{"delta":{"reasoning_content":"think"}}]}`, want: streamEventOutput},
+		{name: "reasoning", json: `{"object":"chat.completion.chunk","choices":[{"delta":{"reasoning":"think"}}]}`, want: streamEventOutput},
+		{name: "tool calls", json: `{"object":"chat.completion.chunk","choices":[{"delta":{"tool_calls":[{"index":0}]}}]}`, want: streamEventOutput},
+		{name: "legacy function call", json: `{"object":"chat.completion.chunk","choices":[{"delta":{"function_call":{"arguments":"{}"}}}]}`, want: streamEventOutput},
+		{name: "later choice has output", json: `{"object":"chat.completion.chunk","choices":[{"delta":{}},{"delta":{"content":"hello"}}]}`, want: streamEventOutput},
+		{name: "final usage", json: `{"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2}}`, want: streamEventComplete},
+		{name: "continuous usage", json: `{"object":"chat.completion.chunk","choices":[{"delta":{}}],"usage":{"prompt_tokens":4}}`},
+		{name: "loading reasoning has no object", json: `{"choices":[{"delta":{"reasoning_content":"Loading model"}}]}`},
+		{name: "role only", json: `{"object":"chat.completion.chunk","choices":[{"delta":{"role":"assistant"}}]}`},
+		{name: "finish only", json: `{"object":"chat.completion.chunk","choices":[{"delta":{},"finish_reason":"stop"}]}`},
+		{name: "extension only", json: `{"object":"chat.completion.chunk","choices":[{"delta":{}}],"kv_transfer_params":{"foo":"bar"}}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyStreamEvent(streamFormatChatCompletions, gjson.Parse(test.json))
+			if got != test.want {
+				t.Fatalf("classifyStreamEvent() = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestServer_StreamRateObserver(t *testing.T) {
+	observer := newStreamRateObserver(streamFormatChatCompletions)
+	observer.observe([]byte("data: not-json\n: comment\ndata: [DONE]\n"), 100*time.Millisecond)
+	observer.observe([]byte(`data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"hel`), 150*time.Millisecond)
+	observer.observe([]byte("lo"+`"}}]}`+"\n"), 200*time.Millisecond)
+	observer.observe([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Loading model\"}}]}\n"+
+		"data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n"), 500*time.Millisecond)
+	observer.observe([]byte(`data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"unfinished"}}]}`), 900*time.Millisecond)
+
+	if observer.firstOutput != 200*time.Millisecond || observer.lastOutput != 500*time.Millisecond {
+		t.Fatalf("first/last = %v/%v, want 200ms/500ms", observer.firstOutput, observer.lastOutput)
+	}
+}
+
+func TestServer_StreamRateObserver_BatchedEventsShareWriteTime(t *testing.T) {
+	observer := newStreamRateObserver(streamFormatChatCompletions)
+	observer.observe([]byte("data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n"+
+		"data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"two\"}}]}\n"), 250*time.Millisecond)
+
+	if observer.firstOutput != 250*time.Millisecond || observer.lastOutput != 250*time.Millisecond {
+		t.Fatalf("first/last = %v/%v, want both 250ms", observer.firstOutput, observer.lastOutput)
 	}
 }
 
@@ -195,7 +419,7 @@ func TestMetricsMonitor_RecordMetadata(t *testing.T) {
 	}))
 
 	w := httptest.NewRecorder()
-	copier := newBodyCopier(w)
+	copier := newBodyCopier(w, streamFormatDisabled)
 	copier.WriteHeader(http.StatusOK)
 	copier.Write([]byte(`{"usage":{"prompt_tokens":1,"completion_tokens":2}}`))
 
@@ -222,7 +446,7 @@ func TestMetricsMonitor_RecordClientClosed(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	w := httptest.NewRecorder()
-	copier := newBodyCopier(w)
+	copier := newBodyCopier(w, streamFormatDisabled)
 	// Nothing is ever written: this is the cold-load cancellation shape.
 	copier.MarkStatus(swaputil.StatusClientClosedRequest)
 
@@ -333,7 +557,7 @@ func TestMetricsMonitor_RecordFailedRequestCapture(t *testing.T) {
 	reqHeaders := map[string]string{"content-type": "application/json"}
 
 	w := httptest.NewRecorder()
-	copier := newBodyCopier(w)
+	copier := newBodyCopier(w, streamFormatDisabled)
 	copier.Header().Set("Content-Type", "application/json")
 	copier.WriteHeader(http.StatusBadGateway)
 	copier.Write([]byte(`{"error":{"message":"model unavailable"}}`))
@@ -377,7 +601,7 @@ func TestMetricsMonitor_RecordFailedRequestStatusFallback(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	w := httptest.NewRecorder()
-	copier := newBodyCopier(w)
+	copier := newBodyCopier(w, streamFormatDisabled)
 	copier.WriteHeader(http.StatusBadGateway)
 	copier.Write([]byte("<html>upstream down</html>"))
 
@@ -397,7 +621,7 @@ func TestMetricsMonitor_RecordFailedRequestCaptureDisabled(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	w := httptest.NewRecorder()
-	copier := newBodyCopier(w)
+	copier := newBodyCopier(w, streamFormatDisabled)
 	copier.WriteHeader(http.StatusInternalServerError)
 	copier.Write([]byte(`{"error":"boom"}`))
 
@@ -424,7 +648,7 @@ func TestMetricsMonitor_RecordDecompressionFailureSetsErrorMsg(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	w := httptest.NewRecorder()
-	copier := newBodyCopier(w)
+	copier := newBodyCopier(w, streamFormatDisabled)
 	copier.Header().Set("Content-Encoding", "gzip")
 	copier.WriteHeader(http.StatusOK)
 	copier.Write([]byte("not-really-gzip"))
@@ -449,7 +673,7 @@ func TestMetricsMonitor_DecodeResponseBody(t *testing.T) {
 
 	// No Content-Encoding: body returned unchanged.
 	w := httptest.NewRecorder()
-	copier := newBodyCopier(w)
+	copier := newBodyCopier(w, streamFormatDisabled)
 	copier.Write([]byte("plain"))
 	got, err := mm.decodeResponseBody(copier, "/p")
 	if err != nil || string(got) != "plain" {
@@ -458,7 +682,7 @@ func TestMetricsMonitor_DecodeResponseBody(t *testing.T) {
 
 	// Bogus gzip payload: returns an error and no body (no raw bytes kept).
 	w2 := httptest.NewRecorder()
-	copier2 := newBodyCopier(w2)
+	copier2 := newBodyCopier(w2, streamFormatDisabled)
 	copier2.Header().Set("Content-Encoding", "gzip")
 	copier2.Write([]byte("not-really-gzip"))
 	got, err = mm.decodeResponseBody(copier2, "/p")

@@ -214,7 +214,7 @@ func (mp *metricsMonitor) record(modelID string, r *http.Request, recorder *resp
 	}
 
 	if strings.Contains(recorder.Header().Get("Content-Type"), "text/event-stream") {
-		if parsed, err := processStreamingResponse(modelID, recorder.StartTime(), body); err != nil {
+		if parsed, err := processStreamingResponse(modelID, recorder.StartTime(), body, recorder.observer); err != nil {
 			mp.logger.Warnf("error processing streaming response: %v, path=%s, recording minimal metrics", err, r.URL.Path)
 		} else {
 			tm.Tokens = parsed.Tokens
@@ -348,6 +348,147 @@ func failedErrorMessage(status int, body []byte, decErr error) string {
 // usagePaths lists the JSON paths where a per-event usage object can live.
 var usagePaths = []string{"usage", "response.usage", "message.usage"}
 
+// streamFormat identifies the streaming wire format of a model-dispatched
+// endpoint so its events can be told apart for proxy-side rate estimates.
+// Only Chat Completions is recognized; other endpoints stay disabled.
+type streamFormat uint8
+
+const (
+	streamFormatDisabled streamFormat = iota
+	streamFormatChatCompletions
+)
+
+// streamFormatForPath maps a normalized model-dispatched path to its format.
+func streamFormatForPath(path string) streamFormat {
+	switch path {
+	case "/v1/chat/completions", "/v/chat/completions":
+		return streamFormatChatCompletions
+	default:
+		return streamFormatDisabled
+	}
+}
+
+type streamEventFlags uint8
+
+const (
+	// streamEventOutput marks an event carrying generated model output.
+	streamEventOutput streamEventFlags = 1 << iota
+	// streamEventComplete marks the final event carrying exact usage counts.
+	streamEventComplete
+)
+
+// streamRateObserver watches the bytes forwarded to the client during a
+// streamed response and records when the first and last output-bearing
+// events went out. It keeps only a trailing partial line between writes.
+type streamRateObserver struct {
+	format      streamFormat
+	partialLine []byte
+	firstOutput time.Duration // -1 until the first output event is seen
+	lastOutput  time.Duration
+}
+
+func newStreamRateObserver(format streamFormat) *streamRateObserver {
+	return &streamRateObserver{
+		format:      format,
+		firstOutput: -1,
+		lastOutput:  -1,
+	}
+}
+
+// parseStreamDataLine returns the JSON payload of an SSE "data:" line, or
+// false for blank, comment, [DONE] and malformed lines.
+func parseStreamDataLine(line []byte) (gjson.Result, bool) {
+	line = bytes.TrimSpace(line)
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return gjson.Result{}, false
+	}
+	data := bytes.TrimSpace(line[len("data:"):])
+	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) || !gjson.ValidBytes(data) {
+		return gjson.Result{}, false
+	}
+	return gjson.ParseBytes(data), true
+}
+
+// classifyStreamEvent reports what a streamed event contributes under format.
+// Chat output requires object == "chat.completion.chunk": llama-swap's own
+// model-loading status frames reuse the delta shape without it and must not
+// count as the first generated token. Completion is the standard final chunk
+// with empty choices and a usage object (stream_options.include_usage).
+func classifyStreamEvent(format streamFormat, event gjson.Result) streamEventFlags {
+	if format != streamFormatChatCompletions || event.Get("object").String() != "chat.completion.chunk" {
+		return 0
+	}
+
+	var flags streamEventFlags
+	choices := event.Get("choices").Array()
+	if len(choices) == 0 && event.Get("usage").IsObject() {
+		flags |= streamEventComplete
+	}
+	for _, choice := range choices {
+		delta := choice.Get("delta")
+		if delta.Get("content").String() != "" ||
+			delta.Get("reasoning_content").String() != "" ||
+			delta.Get("reasoning").String() != "" ||
+			len(delta.Get("tool_calls").Array()) > 0 ||
+			len(delta.Get("function_call").Map()) > 0 {
+			flags |= streamEventOutput
+			break
+		}
+	}
+	return flags
+}
+
+// observe scans one client write for completed lines. Every line completed by
+// the write is stamped with the same elapsed time.
+func (o *streamRateObserver) observe(data []byte, elapsed time.Duration) {
+	for len(data) > 0 {
+		nl := bytes.IndexByte(data, '\n')
+		if nl < 0 {
+			o.partialLine = append(o.partialLine, data...)
+			return
+		}
+
+		line := data[:nl]
+		if len(o.partialLine) > 0 {
+			o.partialLine = append(o.partialLine, line...)
+			line = o.partialLine
+		}
+		o.observeLine(line, elapsed)
+		o.partialLine = o.partialLine[:0]
+		data = data[nl+1:]
+	}
+}
+
+func (o *streamRateObserver) observeLine(line []byte, elapsed time.Duration) {
+	event, ok := parseStreamDataLine(line)
+	if !ok || classifyStreamEvent(o.format, event)&streamEventOutput == 0 {
+		return
+	}
+	if o.firstOutput < 0 {
+		o.firstOutput = elapsed
+	}
+	o.lastOutput = elapsed
+}
+
+// applyRateFallback fills rates buildMetrics left unknown (-1) from the
+// observed output window and the exact counts of the final usage chunk.
+// Prompt rate spans dispatch to first output, so it includes queueing and
+// model-load time. Generation rate spreads the remaining output tokens over
+// the first-to-last output window and needs at least two distinct writes.
+func (o *streamRateObserver) applyRateFallback(metrics *ActivityLogEntry, inputTokens, outputTokens, cachedTokens int64) {
+	if metrics.Tokens.PromptPerSecond == -1 && o.firstOutput > 0 {
+		if cachedTokens < 0 {
+			cachedTokens = 0
+		}
+		if uncached := inputTokens - cachedTokens; uncached > 0 {
+			metrics.Tokens.PromptPerSecond = float64(uncached) / o.firstOutput.Seconds()
+		}
+	}
+	if metrics.Tokens.TokensPerSecond == -1 && outputTokens >= 2 && o.lastOutput > o.firstOutput {
+		metrics.Tokens.TokensPerSecond = float64(outputTokens-1) / (o.lastOutput - o.firstOutput).Seconds()
+	}
+}
+
 // extractUsageTokens reads input/output/cached token counts from a usage
 // gjson.Result, handling the field-name differences across endpoints.
 func extractUsageTokens(usage gjson.Result) (input, output, cached int64, ok bool) {
@@ -385,16 +526,23 @@ func extractUsageTokens(usage gjson.Result) (input, output, cached int64, ok boo
 	return
 }
 
-func processStreamingResponse(modelID string, start time.Time, body []byte) (ActivityLogEntry, error) {
+// processStreamingResponse accumulates usage and native metrics from an SSE
+// body. observer is nil unless the route has a recognized stream format; when
+// present, its timings back-fill rates the upstream did not report.
+func processStreamingResponse(modelID string, start time.Time, body []byte, observer *streamRateObserver) (ActivityLogEntry, error) {
 	var (
 		inputTokens, outputTokens int64
 		cachedTokens              int64 = -1
 		hasAny                    bool
 		timings                   gjson.Result
 		responseMetrics           gjson.Result
+		completionUsage           gjson.Result
 	)
+	format := streamFormatDisabled
+	if observer != nil {
+		format = observer.format
+	}
 
-	prefix := []byte("data:")
 	for offset := 0; offset < len(body); {
 		nl := bytes.IndexByte(body[offset:], '\n')
 		var line []byte
@@ -406,18 +554,13 @@ func processStreamingResponse(modelID string, start time.Time, body []byte) (Act
 			offset += nl + 1
 		}
 
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || !bytes.HasPrefix(line, prefix) {
+		parsed, ok := parseStreamDataLine(line)
+		if !ok {
 			continue
 		}
-		data := bytes.TrimSpace(line[len(prefix):])
-		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
-			continue
+		if classifyStreamEvent(format, parsed)&streamEventComplete != 0 {
+			completionUsage = parsed.Get("usage")
 		}
-		if !gjson.ValidBytes(data) {
-			continue
-		}
-		parsed := gjson.ParseBytes(data)
 
 		for _, path := range usagePaths {
 			u := parsed.Get(path)
@@ -453,7 +596,12 @@ func processStreamingResponse(modelID string, start time.Time, body []byte) (Act
 		return ActivityLogEntry{}, fmt.Errorf("no valid JSON data found in stream")
 	}
 
-	return buildMetrics(modelID, start, inputTokens, outputTokens, cachedTokens, timings, responseMetrics), nil
+	metrics := buildMetrics(modelID, start, inputTokens, outputTokens, cachedTokens, timings, responseMetrics)
+	if observer != nil && completionUsage.Exists() {
+		input, output, cached, _ := extractUsageTokens(completionUsage)
+		observer.applyRateFallback(&metrics, input, output, cached)
+	}
+	return metrics, nil
 }
 
 func parseMetrics(modelID string, start time.Time, usage, timings, responseMetrics gjson.Result) (ActivityLogEntry, error) {
@@ -571,23 +719,31 @@ type responseBodyCopier struct {
 	http.ResponseWriter
 	body        *bytes.Buffer
 	tee         io.Writer
+	observer    *streamRateObserver // nil unless the route has a recognized stream format
 	status      int
 	wroteHeader bool
 	start       time.Time
 }
 
-func newBodyCopier(w http.ResponseWriter) *responseBodyCopier {
+func newBodyCopier(w http.ResponseWriter, format streamFormat) *responseBodyCopier {
 	buf := &bytes.Buffer{}
+	var observer *streamRateObserver
+	if format != streamFormatDisabled {
+		observer = newStreamRateObserver(format)
+	}
 	return &responseBodyCopier{
 		ResponseWriter: w,
 		body:           buf,
 		tee:            io.MultiWriter(w, buf),
+		observer:       observer,
 		status:         http.StatusOK,
 		start:          time.Now(),
 	}
 }
 
 func (w *responseBodyCopier) Write(b []byte) (int, error) {
+	// Stamp before forwarding so a slow client does not stretch the observed window.
+	elapsed := time.Since(w.start)
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
@@ -597,7 +753,15 @@ func (w *responseBodyCopier) Write(b []byte) (int, error) {
 	if w.status == http.StatusSwitchingProtocols {
 		return w.ResponseWriter.Write(b)
 	}
-	return w.tee.Write(b)
+	n, err := w.tee.Write(b)
+	// Only bytes the client fully received count. Compressed streams are
+	// skipped: event boundaries are not visible in the wire bytes.
+	if err == nil && n == len(b) && w.observer != nil &&
+		strings.Contains(w.Header().Get("Content-Type"), "text/event-stream") &&
+		w.Header().Get("Content-Encoding") == "" {
+		w.observer.observe(b, elapsed)
+	}
+	return n, err
 }
 
 func (w *responseBodyCopier) WriteHeader(statusCode int) {
