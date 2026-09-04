@@ -12,6 +12,7 @@ import {
   hasListedModels,
   inFlightRequests,
   inflightRequestEntries,
+  loadModel,
   models,
   playgroundModels,
   profileModels,
@@ -20,6 +21,7 @@ import {
   setActiveProfile,
   tailcatStatus,
   uiConfig,
+  unloadSingleModel,
 } from "./api";
 
 afterEach(() => {
@@ -73,6 +75,59 @@ describe("hardware api", () => {
   it("rejects unavailable hardware", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
     await expect(getHardware()).rejects.toThrow("Failed to fetch hardware: 503");
+  });
+});
+
+describe("model loading", () => {
+  it("surfaces the server envelope message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          src: "llama-swap",
+          error: { message: "model load rejected by server" },
+        }),
+      }),
+    );
+
+    await expect(loadModel("b")).rejects.toThrow(
+      "Failed to load model: model load rejected by server",
+    );
+  });
+
+  it("falls back when the body is not an envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => {
+          throw new SyntaxError("Unexpected token");
+        },
+      }),
+    );
+
+    await expect(loadModel("b")).rejects.toThrow("Failed to load model: 500");
+  });
+
+  it("surfaces the unload envelope message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          src: "llama-swap",
+          error: { message: "model unload failed via vllm sleep" },
+        }),
+      }),
+    );
+
+    await expect(unloadSingleModel("a")).rejects.toThrow(
+      "Failed to unload model: model unload failed via vllm sleep",
+    );
   });
 });
 
