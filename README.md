@@ -52,6 +52,19 @@ send final usage by default. Buffering and chunk batching affect accuracy, and
 compressed, incomplete, or usage-free streams leave rates unavailable.
 llama-swap does not rewrite requests to enable usage reporting.
 
+### Configured model order
+
+Branch: `candidate/model-config-order`
+
+Model declaration order in YAML now controls automatic `${PORT}` allocation
+and presentation in `/v1/models`, `/models`, `/running`, and the web UI. Alias
+entries stay beside their model, while peers and other virtual entries remain
+deterministic after configured local models.
+
+Reordering models can change automatically assigned ports. Configurations that
+expose fixed ports to other services should use explicit values in both `cmd`
+and `proxy`.
+
 ## Fork-only changes
 
 ### Admin PIN lock
