@@ -108,14 +108,10 @@ func (s *Server) handleAPIActiveProfile(w http.ResponseWriter, r *http.Request) 
 func (s *Server) modelStatus() []apiModel {
 	running := s.local.RunningStatus()
 
-	ids := make([]string, 0, len(s.cfg.Models))
-	for id := range s.cfg.Models {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-
-	models := make([]apiModel, 0, len(ids))
-	for _, id := range ids {
+	// Configured order (params.yaml declaration order) rather than sorted IDs,
+	// so the dashboard lists models the way their operator arranged them.
+	models := make([]apiModel, 0, len(s.cfg.Models))
+	for _, id := range s.cfg.OrderedModelIDs() {
 		mc := s.cfg.Models[id]
 		state := "stopped"
 		var readySince string
@@ -148,7 +144,8 @@ func (s *Server) modelStatus() []apiModel {
 		})
 	}
 
-	for peerID, peer := range s.cfg.Peers {
+	for _, peerID := range sortedMapKeys(s.cfg.Peers) {
+		peer := s.cfg.Peers[peerID]
 		for _, modelID := range peer.Models {
 			models = append(models, apiModel{Id: config.PeerModelFQN(peerID, modelID), PeerID: peerID})
 		}

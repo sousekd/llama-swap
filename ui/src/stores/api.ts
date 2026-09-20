@@ -130,10 +130,8 @@ export function handleAPIEventMessage(data: string): void {
       const newModels = (JSON.parse(message.data) as Model[]).map((m) =>
         m.uptimeMs !== undefined ? { ...m, readyAt: receivedAt - m.uptimeMs } : m,
       );
-      // Sort models by name and id
-      newModels.sort((a, b) => {
-        return (a.name + a.id).localeCompare(b.name + b.id, undefined, { numeric: true });
-      });
+      // No client-side re-sort: the server returns models in configured
+      // (params.yaml) order and the dashboard preserves it.
       models.set(newModels);
       break;
     }
@@ -305,9 +303,6 @@ async function loadPlaygroundModels(request: number): Promise<Model[]> {
           spillover: metadata?.spillover,
         };
       });
-    newModels.sort((a, b) => {
-      return (a.name + a.id).localeCompare(b.name + b.id, undefined, { numeric: true });
-    });
     if (request === playgroundModelsRequest) playgroundModels.set(newModels);
     return newModels;
   } catch (error) {

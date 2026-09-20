@@ -185,6 +185,42 @@ func TestServer_TailcatFiltersModelListing(t *testing.T) {
 	}
 }
 
+func TestServer_TailcatModelListingPreservesConfiguredOrder(t *testing.T) {
+	cfg, err := config.LoadConfigFromReader(strings.NewReader(`
+models:
+  zeta:
+    proxy: http://localhost:1
+  hidden:
+    proxy: http://localhost:2
+  alpha:
+    proxy: http://localhost:3
+tailcat:
+  models: [alpha, zeta]
+  allow: ["*"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetTailcatEnabled(true)
+	s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
+	s.cfg = cfg
+	s.routes()
+
+	w := httptest.NewRecorder()
+	s.ServeTailcatHTTP(w, tailcatRequest(http.MethodGet, "/v1/models", ""))
+	var response struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 2 || response.Data[0].ID != "zeta" || response.Data[1].ID != "alpha" {
+		t.Fatalf("listed models = %+v, want zeta then alpha", response.Data)
+	}
+}
+
 func TestServer_TailcatAdminUnlocksNormalSurface(t *testing.T) {
 	s := newTailcatPolicyServer(t, "")
 	s.cfg.Tailcat.Admin = true
