@@ -127,6 +127,80 @@ func TestServer_HandleListModels_Aliases(t *testing.T) {
 	}
 }
 
+func TestServer_ModelListings_PreserveConfiguredOrder(t *testing.T) {
+	cfg, err := config.LoadConfigFromReader(strings.NewReader(`
+includeAliasesInList: true
+models:
+  zeta:
+    cmd: echo zeta
+    proxy: http://localhost:9002
+    aliases: [zeta-two, zeta-one]
+  alpha:
+    cmd: echo alpha
+    proxy: http://localhost:9001
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Peers = config.PeerDictionaryConfig{
+		"z-peer": {Models: []string{"second", "first"}},
+		"a-peer": {Models: []string{"only"}},
+	}
+
+	local := newStubRouter(nil, "")
+	local.running = map[string]process.ProcessState{
+		"alpha":      process.StateReady,
+		"zeta":       process.StateStarting,
+		"unexpected": process.StateStopping,
+	}
+	s := newTestServer(local, newStubRouter(nil, ""))
+	s.cfg = cfg
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	var listed struct {
+		Data []modelRecord `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode model list: %v", err)
+	}
+	listedIDs := make([]string, 0, len(listed.Data))
+	for _, model := range listed.Data {
+		listedIDs = append(listedIDs, model.ID)
+	}
+	wantListed := []string{"zeta", "zeta-two", "zeta-one", "alpha", "a-peer/only", "z-peer/second", "z-peer/first"}
+	if !stringSliceEqual(listedIDs, wantListed) {
+		t.Errorf("listed IDs = %v, want %v", listedIDs, wantListed)
+	}
+
+	status := s.modelStatus()
+	statusIDs := make([]string, 0, len(status))
+	for _, model := range status {
+		statusIDs = append(statusIDs, model.Id)
+	}
+	wantStatus := []string{"zeta", "alpha", "a-peer/only", "z-peer/second", "z-peer/first"}
+	if !stringSliceEqual(statusIDs, wantStatus) {
+		t.Errorf("status IDs = %v, want %v", statusIDs, wantStatus)
+	}
+
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/running", nil))
+	var running struct {
+		Running []runningModel `json:"running"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &running); err != nil {
+		t.Fatalf("decode running list: %v", err)
+	}
+	runningIDs := make([]string, 0, len(running.Running))
+	for _, model := range running.Running {
+		runningIDs = append(runningIDs, model.Model)
+	}
+	wantRunning := []string{"zeta", "alpha", "unexpected"}
+	if !stringSliceEqual(runningIDs, wantRunning) {
+		t.Errorf("running IDs = %v, want %v", runningIDs, wantRunning)
+	}
+}
+
 func TestServer_HandleListModels_Status(t *testing.T) {
 	local := newStubRouter(nil, "")
 	local.running = map[string]process.ProcessState{"loaded-model": process.StateReady}

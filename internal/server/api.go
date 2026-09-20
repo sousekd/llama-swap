@@ -116,6 +116,15 @@ func contains(ss []string, s string) bool {
 	return false
 }
 
+func sortedMapKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // filterCappedMetadata returns metadata with renderer-owned keys removed.
 func filterCappedMetadata(md map[string]any) map[string]any {
 	if len(md) == 0 {
@@ -190,7 +199,8 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		return rec
 	}
 
-	for id, mc := range s.cfg.Models {
+	for _, id := range s.cfg.OrderedModelIDs() {
+		mc := s.cfg.Models[id]
 		modelIDs[id] = struct{}{}
 		for _, alias := range mc.Aliases {
 			modelIDs[alias] = struct{}{}
@@ -223,7 +233,8 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for peerID, peer := range s.cfg.Peers {
+	for _, peerID := range sortedMapKeys(s.cfg.Peers) {
+		peer := s.cfg.Peers[peerID]
 		for _, modelID := range peer.Models {
 			fqn := config.PeerModelFQN(peerID, modelID)
 			modelIDs[fqn] = struct{}{}
@@ -243,7 +254,8 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for selectorID, selector := range s.cfg.Selectors {
+	for _, selectorID := range sortedMapKeys(s.cfg.Selectors) {
+		selector := s.cfg.Selectors[selectorID]
 		modelIDs[selectorID] = struct{}{}
 		if selector.Unlisted {
 			continue
@@ -281,7 +293,8 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if profile, ok := s.cfg.Profiles[s.ActiveProfile()]; ok {
-		for pin, target := range profile.Pins {
+		for _, pin := range sortedMapKeys(profile.Pins) {
+			target := profile.Pins[pin]
 			if target == "" {
 				continue
 			}
@@ -300,7 +313,6 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sort.Slice(data, func(i, j int) bool { return data[i].ID < data[j].ID })
 	if isTailcatRequest(r.Context()) {
 		exposed := s.cfg.Tailcat
 		filtered := data[:0]
@@ -345,7 +357,8 @@ func (s *Server) handleUnload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRunning(w http.ResponseWriter, r *http.Request) {
 	states := s.local.RunningModels()
 	list := make([]runningModel, 0, len(states))
-	for id, state := range states {
+	seen := make(map[string]struct{}, len(states))
+	appendRunning := func(id string, state process.ProcessState) {
 		mc := s.cfg.Models[id]
 		list = append(list, runningModel{
 			Model:       id,
@@ -356,8 +369,18 @@ func (s *Server) handleRunning(w http.ResponseWriter, r *http.Request) {
 			Name:        mc.Name,
 			Description: mc.Description,
 		})
+		seen[id] = struct{}{}
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Model < list[j].Model })
+	for _, id := range s.cfg.OrderedModelIDs() {
+		if state, running := states[id]; running {
+			appendRunning(id, state)
+		}
+	}
+	for _, id := range sortedMapKeys(states) {
+		if _, found := seen[id]; !found {
+			appendRunning(id, states[id])
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"running": list})
