@@ -193,6 +193,7 @@ groups:
 		LogTimeFormat: "",
 		LogToStdout:   LogToStdoutProxy,
 		StartPort:     5800,
+		modelOrder:    []string{"model1", "model2", "model3", "model4"},
 		Macros: MacroList{
 			{"svr-path", "path/to/server"},
 		},
