@@ -141,10 +141,6 @@ export function handleAPIEventMessage(data: string): void {
   switch (message.type) {
     case "modelStatus": {
       const newModels = JSON.parse(message.data) as Model[];
-      // Sort models by name and id
-      newModels.sort((a, b) => {
-        return (a.name + a.id).localeCompare(b.name + b.id, undefined, { numeric: true });
-      });
       models.set(newModels);
       break;
     }
@@ -321,9 +317,6 @@ async function loadPlaygroundModels(request: number): Promise<Model[]> {
           spillover: metadata?.spillover,
         };
       });
-    newModels.sort((a, b) => {
-      return (a.name + a.id).localeCompare(b.name + b.id, undefined, { numeric: true });
-    });
     if (request === playgroundModelsRequest) playgroundModels.set(newModels);
     return newModels;
   } catch (error) {
