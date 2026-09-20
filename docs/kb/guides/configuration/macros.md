@@ -3,8 +3,8 @@ title: Reusing configuration with macros
 summary: Global and per-model macros, environment variable macros, and the ordering rules that trip people up.
 category: guides
 tags: [macros, env, dry, substitution]
-config_keys: [macros, models.*.macros]
-updated: 2026-08-25
+config_keys: [macros, models.*.macros, startPort]
+updated: 2026-09-20
 ---
 
 # Reusing configuration with macros
@@ -59,6 +59,28 @@ models:
 - **Macros may reference other macros, but only ones defined before them.** A
   macro referring to a later definition does not resolve. This is the most
   common macro bug — reorder the definitions.
+
+## Model order and automatic ports
+
+Models keep their YAML declaration order. Automatic `${PORT}` values start at
+`startPort` and increase in that order:
+
+```yaml
+startPort: 7000
+models:
+  zeta:
+    cmd: llama-server --port ${PORT} -m /models/zeta.gguf  # 7000
+  alpha:
+    cmd: llama-server --port ${PORT} -m /models/alpha.gguf # 7001
+```
+
+The same order appears in `/v1/models`, `/models`, `/running`, and the web UI.
+When multiple configuration sources are used, files are processed by filename
+and declarations keep their order within each file.
+
+Reordering models can therefore change their automatically assigned ports. If
+another service depends on a fixed port, write that port explicitly in `cmd`
+and `proxy` instead of using `${PORT}`.
 
 ## Types are preserved
 
