@@ -227,19 +227,18 @@ func TestLoadConfigSources_EnvMacroInFlowStyleList(t *testing.T) {
 	assert.Contains(t, cfg.RequiredAPIKeys, "secret123")
 }
 
-func TestLoadConfigSources_SortedOrderDeterministic(t *testing.T) {
+func TestLoadConfigSources_PreservesSourceOrder(t *testing.T) {
 	// Two files defining distinct models, scanned in z..a order by filename.
-	// Determine merged result is the same regardless of how the FS returns them.
+	// Determine merged result preserves declaration order within sorted sources.
 	dir := t.TempDir()
 	writeYAML(t, dir, "z.yaml", "models:\n"+modelCfg("zmodel", "echo z"))
-	writeYAML(t, dir, "a.yaml", "models:\n"+modelCfg("amodel", "echo a"))
+	writeYAML(t, dir, "a.yaml", "models:\n"+modelCfg("middle", "echo middle")+modelCfg("amodel", "echo a"))
 
 	const runs = 3
 	for i := 0; i < runs; i++ {
 		cfg, err := LoadConfigSources("", dir)
 		require.NoError(t, err)
-		// startPort-based allocation: first allocated model gets 5800.
-		// Sorted order means amodel gets 5800, zmodel gets 5801.
+		assert.Equal(t, []string{"middle", "amodel", "zmodel"}, cfg.OrderedModelIDs())
 		_, _, ok := cfg.FindConfig("amodel")
 		assert.True(t, ok)
 		_, _, ok = cfg.FindConfig("zmodel")
