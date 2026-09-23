@@ -208,11 +208,29 @@
           {:else}
             <div class="divide-y">
               {#each profileMappings as [modelID, target] (modelID)}
+                {@const targetModel = target
+                  ? $models.find((m) => m.id === target) ??
+                    $models.find((m) => m.aliases?.includes(target))
+                  : undefined}
                 <div class="hover:bg-muted/50 flex items-center gap-2 px-4 py-2.5">
                   <span class="max-w-[45%] truncate text-sm font-medium">{modelID}</span>
                   <span class="text-muted-foreground text-xs" aria-hidden="true">→</span>
                   {#if target}
-                    <span class="min-w-0 truncate text-sm">{target}</span>
+                    {#if targetModel}
+                      {#if !targetModel.peerID}
+                        <span class={`size-2.5 shrink-0 rounded-full ${statusDotColor(targetModel)}`}></span>
+                      {/if}
+                      <a
+                        href="/models/{encodeURIComponent(target)}"
+                        use:link
+                        class="min-w-0 flex-1 truncate text-sm hover:text-foreground hover:underline"
+                      >{target}</a>
+                      {#if !targetModel.peerID}
+                        <ModelLoadButton model={targetModel} />
+                      {/if}
+                    {:else}
+                      <span class="min-w-0 truncate text-sm">{target}</span>
+                    {/if}
                   {:else}
                     <Tag class="px-1.5 text-[0.625rem] uppercase">disabled</Tag>
                   {/if}
