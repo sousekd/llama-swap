@@ -65,6 +65,20 @@ Reordering models can change automatically assigned ports. Configurations that
 expose fixed ports to other services should use explicit values in both `cmd`
 and `proxy`.
 
+### Profile target actions
+
+Branch: `candidate/profile-target-actions`
+
+In the Models dashboard, each mapping in the active profile card links to the
+detail page of its resolved target model, shows the standard status dot for
+local models, and offers the regular load/unload button. This removes the need
+to scroll to the full model list to start or inspect a profile's target.
+
+Profiles pin an alias to a base model ID or model alias; the row resolves an
+alias to its model with the same lookup as the model detail route. Targets that
+name a selector stay plain text, and peer targets link without local process
+controls, matching the regular model rows.
+
 ## Fork-only changes
 
 ### Admin PIN lock
