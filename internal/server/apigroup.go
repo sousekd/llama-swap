@@ -98,15 +98,8 @@ func (s *Server) handleAPIActiveProfile(w http.ResponseWriter, r *http.Request) 
 // state (defaulting to "stopped"), followed by peer models.
 func (s *Server) modelStatus() []apiModel {
 	running := s.local.RunningModels()
-
-	ids := make([]string, 0, len(s.cfg.Models))
-	for id := range s.cfg.Models {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-
-	models := make([]apiModel, 0, len(ids))
-	for _, id := range ids {
+	models := make([]apiModel, 0, len(s.cfg.Models))
+	for _, id := range s.cfg.OrderedModelIDs() {
 		mc := s.cfg.Models[id]
 		state := "stopped"
 		if st, ok := running[id]; ok {
@@ -130,7 +123,8 @@ func (s *Server) modelStatus() []apiModel {
 		})
 	}
 
-	for peerID, peer := range s.cfg.Peers {
+	for _, peerID := range sortedMapKeys(s.cfg.Peers) {
+		peer := s.cfg.Peers[peerID]
 		for _, modelID := range peer.Models {
 			models = append(models, apiModel{Id: config.PeerModelFQN(peerID, modelID), PeerID: peerID})
 		}
