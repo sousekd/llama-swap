@@ -1,13 +1,14 @@
 <script lang="ts">
   import { link } from "svelte-spa-router";
-  import { FerrisWheel, Boxes, Activity, Cat, ScrollText, Gauge, Cpu, Sun, Moon, Monitor, ChevronRight, Settings, CircleQuestionMark } from "@lucide/svelte";
+  import { FerrisWheel, Boxes, Activity, Cat, ScrollText, Gauge, Cpu, Sun, Moon, Monitor, ChevronRight, Settings, CircleQuestionMark, Snowflake } from "@lucide/svelte";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import * as Collapsible from "$lib/components/ui/collapsible/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { toggleTheme, themeMode, appTitle } from "../stores/theme";
+  import { toggleTheme, themeMode, appTitle, connectionState } from "../stores/theme";
   import { currentRoute } from "../stores/route";
   import { playgroundActivity, docsAgentStreaming } from "../stores/playgroundActivity";
   import { performanceEnabled, models, tailcatStatus } from "../stores/api";
+  import { setFreeze, swapsFrozen } from "../stores/freeze";
   import { showUnlistedModels } from "../stores/modelDisplay";
   import { modelsMenuOpen } from "../stores/sidebar";
   import type { Model } from "../lib/types";
@@ -56,6 +57,19 @@
     yellow: "bg-warning",
     green: "bg-success",
   };
+
+  let freezeBusy = $state(false);
+
+  async function toggleSwapFreeze(): Promise<void> {
+    freezeBusy = true;
+    try {
+      await setFreeze(!$swapsFrozen);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      freezeBusy = false;
+    }
+  }
 </script>
 
 {#snippet modelMenuItem(model: Model)}
@@ -265,6 +279,22 @@
           <Moon />
         {/if}
         <span class="sr-only">Toggle theme</span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        class={$swapsFrozen ? "bg-primary text-primary-foreground hover:bg-primary/80" : ""}
+        onclick={toggleSwapFreeze}
+        disabled={freezeBusy || $connectionState !== "connected"}
+        aria-pressed={$swapsFrozen}
+        title={$connectionState !== "connected"
+          ? "Swap freeze unavailable while disconnected"
+          : $swapsFrozen
+            ? "Resume model swaps"
+            : "Freeze model swaps"}
+      >
+        <Snowflake class={freezeBusy ? "animate-spin" : ""} />
+        <span class="sr-only">{$swapsFrozen ? "Resume model swaps" : "Freeze model swaps"}</span>
       </Button>
     </div>
   </Sidebar.Footer>
