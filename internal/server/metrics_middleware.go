@@ -74,7 +74,7 @@ func CreateMetricsMiddleware(mm *metricsMonitor, cfg config.Config) chain.Middle
 				r.Header.Set("Accept-Encoding", filterAcceptEncoding(ae))
 			}
 
-			recorder := newBodyCopier(w)
+			recorder := newBodyCopier(w, streamFormatForPath(checkPath))
 			next.ServeHTTP(recorder, r)
 			// A request abandoned before any response was written must not be
 			// filed as a successful (empty-body) metric. See #1029.
