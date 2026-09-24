@@ -190,6 +190,9 @@ type Config struct {
 	// map aliases to actual model IDs
 	aliases map[string]string
 
+	// modelOrder preserves declaration order while Models remains optimized for lookup.
+	modelOrder []string
+
 	// automatic port assignments
 	StartPort int `yaml:"startPort"`
 
@@ -229,6 +232,36 @@ func (c *Config) SetTailcatEnabled(enabled bool) {
 // TailcatEnabled reports whether this process has a Tailcat listener.
 func (c Config) TailcatEnabled() bool {
 	return c.tailcatEnabled
+}
+
+// OrderedModelIDs returns configured model IDs in declaration order. Models
+// added programmatically are appended alphabetically for deterministic output.
+func (c Config) OrderedModelIDs() []string {
+	return orderedKeys(c.modelOrder, c.Models)
+}
+
+func orderedKeys[T any](preferred []string, values map[string]T) []string {
+	ordered := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, key := range preferred {
+		if _, found := values[key]; !found {
+			continue
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		ordered = append(ordered, key)
+		seen[key] = struct{}{}
+	}
+
+	missing := make([]string, 0, len(values)-len(ordered))
+	for key := range values {
+		if _, found := seen[key]; !found {
+			missing = append(missing, key)
+		}
+	}
+	sort.Strings(missing)
+	return append(ordered, missing...)
 }
 
 // RoutingConfig is the canonical, normalized routing/scheduling configuration.
@@ -314,12 +347,10 @@ func AddDefaultGroupToConfig(config Config) Config {
 	// if groups is empty, create a default group and put
 	// all models into it
 	if len(config.Groups) == 0 {
-		for modelName := range config.Models {
-			defaultGroup.Members = append(defaultGroup.Members, modelName)
-		}
+		defaultGroup.Members = append(defaultGroup.Members, config.OrderedModelIDs()...)
 	} else {
 		// iterate over existing group members and add non-grouped models into the default group
-		for modelName := range config.Models {
+		for _, modelName := range config.OrderedModelIDs() {
 			foundModel := false
 		found:
 			// search for the model in existing groups
@@ -338,7 +369,6 @@ func AddDefaultGroupToConfig(config Config) Config {
 		}
 	}
 
-	sort.Strings(defaultGroup.Members) // make consistent ordering for testing
 	config.Groups[DEFAULT_GROUP_ID] = defaultGroup
 
 	return config
