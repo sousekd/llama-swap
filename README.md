@@ -96,5 +96,6 @@ Fork features removed after upstream gained equivalent behavior:
 - **Runtime alias profiles:** removed in the v244 sync after upstream shipped native profiles in [PR #935](https://github.com/mostlygeek/llama-swap/pull/935). Old fork configurations used `aliases:` inside profiles; current upstream configurations use `pins:`.
 - **Bidirectional group exclusivity:** removed after the upstream `matrix:` solver proved suitable for the same scheduling use cases. See [issue #215](https://github.com/mostlygeek/llama-swap/issues/215) and [PR #631](https://github.com/mostlygeek/llama-swap/pull/631).
 - **Pool-scoped group exclusivity:** removed for the same reason. See [issue #632](https://github.com/mostlygeek/llama-swap/issues/632).
+- **Profile target actions:** contributed upstream and available natively since the merge of [PR #1170](https://github.com/mostlygeek/llama-swap/pull/1170). Each mapping in the active profile card links to its resolved target model by canonical ID, shows the status dot for local models, and offers the load/unload button; selector and peer targets keep their plain/limited forms. No fork migration is needed.
 
 The fork stays close to upstream and keeps each active feature isolated so it can be removed cleanly if upstream gains equivalent behavior.
