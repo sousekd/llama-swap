@@ -709,7 +709,7 @@
             },
             "additionalProperties": false,
             "description": "Tailcat HTTP policy. A Tailcat listener starts only when -listen-tailcat supplies a server PrivateKey JSON file."
-            },
+        },
         "adminPin": {
             "type": "string",
             "default": "",
