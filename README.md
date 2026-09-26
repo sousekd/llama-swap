@@ -85,8 +85,9 @@ protected at the API level. See
 [discussion #640](https://github.com/mostlygeek/llama-swap/discussions/640).
 
 `adminPin` protects only the Activity capture View control. It does not restrict
-`/metrics`, `/api/mcp`, Tailcat admin access, or direct requests to
-`/api/captures/{id}`.
+`/metrics`, `/api/mcp`, Tailcat admin access, the log streams upstream v259
+split out (`/logs/stream/{proxy,upstream,http}`, `/api/events/logs`), or direct
+requests to `/api/captures/{id}`.
 
 ## Previously included
 
