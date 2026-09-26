@@ -406,7 +406,8 @@ export async function unloadSingleModel(model: string): Promise<void> {
       method: "POST",
     });
     if (!response.ok) {
-      throw new Error(`Failed to unload model: ${response.status}`);
+      const { reason } = await responseErrorDetails(response);
+      throw new Error(`Failed to unload model: ${reason}`);
     }
   } catch (error) {
     console.error("Failed to unload model", model, error);
@@ -435,7 +436,11 @@ export async function loadModel(model: string, signal?: AbortSignal): Promise<vo
       signal,
     });
     if (!response.ok) {
-      throw new Error(`Failed to load model: ${response.status}`);
+      const { source, reason } = await responseErrorDetails(response);
+      if (response.status === 404 && source !== "llama-swap") {
+        return;
+      }
+      throw new Error(`Failed to load model: ${reason}`);
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -444,6 +449,21 @@ export async function loadModel(model: string, signal?: AbortSignal): Promise<vo
     console.error("Failed to load model:", error);
     throw error;
   }
+}
+
+async function responseErrorDetails(response: Response): Promise<{
+  source?: string;
+  reason: string;
+}> {
+  const body = (await response.json().catch(() => null)) as {
+    src?: unknown;
+    error?: { message?: unknown };
+  } | null;
+  const message = body?.error?.message;
+  return {
+    source: typeof body?.src === "string" ? body.src : undefined,
+    reason: typeof message === "string" && message.length > 0 ? message : String(response.status),
+  };
 }
 
 export async function getCapture(id: number): Promise<ReqRespCapture | null> {
