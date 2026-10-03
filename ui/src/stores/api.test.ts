@@ -218,6 +218,18 @@ describe("api store event handling", () => {
     }
   });
 
+  it("preserves backend model order in status events", () => {
+    handleAPIEventMessage(JSON.stringify({
+      type: "modelStatus",
+      data: JSON.stringify([
+        { id: "zeta", name: "Zulu" },
+        { id: "alpha", name: "Alpha" },
+      ]),
+    }));
+
+    expect(get(models).map((model) => model.id)).toEqual(["zeta", "alpha"]);
+  });
+
   it("parses inflight request entries", () => {
     inFlightRequests.set(0);
     inflightRequestEntries.set([]);
@@ -396,6 +408,12 @@ describe("api store event handling", () => {
     await fetchPlaygroundModels();
 
     expect(mockFetch).toHaveBeenCalledWith("/v1/models");
+    expect(get(playgroundModels).map((model) => model.id)).toEqual([
+      "real",
+      "remote/remote-model",
+      "pool",
+      "public",
+    ]);
     expect(get(playgroundModels).map((model) => model.id)).not.toContain("variant");
     expect(get(playgroundModels).find((model) => model.id === "real")).toMatchObject({
       aliases: ["variant", "alternate"],
