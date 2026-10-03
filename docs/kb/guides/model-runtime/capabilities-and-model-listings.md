@@ -78,6 +78,10 @@ Servers reporting anything else are left alone, including image, speech and
 transcription servers, which have no capability surface to read. A llama.cpp
 fork that keeps the upstream API reports `llamacpp` and is read the same way.
 
+Since upstream v262, an unrecognized `owned_by` also falls back to a default
+prober, which guesses tools and context from whatever the listing JSON itself
+contains. Behavior for recognized servers is unchanged.
+
 ## Setting capabilities by hand
 
 Values you write win, field by field, as long as they are not the zero value
