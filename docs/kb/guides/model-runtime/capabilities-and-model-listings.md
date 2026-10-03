@@ -4,7 +4,7 @@ summary: Advertise images, tools and context length in /v1/models, automatically
 category: guides
 tags: [capabilities, models, tools, vision, context, autodetect, llama-server, vllm, halogen, playground]
 config_keys: [models.*.capabilities, models.*.capabilities.disableAuto, store.path]
-updated: 2026-09-22
+updated: 2026-10-03
 ---
 
 # Model capabilities and model listings
@@ -70,6 +70,10 @@ curl -s localhost:PORT/v1/models | jq -r '.data[0].owned_by'
 Servers reporting anything else are left alone, including image, speech and
 transcription servers, which have no capability surface to read. A llama.cpp
 fork that keeps the upstream API reports `llamacpp` and is read the same way.
+
+Since upstream v262, an unrecognized `owned_by` also falls back to a default
+prober, which guesses tools and context from whatever the listing JSON itself
+contains. Behavior for recognized servers is unchanged.
 
 ## Setting capabilities by hand
 
