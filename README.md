@@ -86,7 +86,8 @@ protected at the API level. See
 
 `adminPin` protects only the Activity capture View control. It does not restrict
 `/metrics`, `/api/mcp`, Tailcat admin access, the log streams upstream v259
-split out (`/logs/stream/{proxy,upstream,http}`, `/api/events/logs`), or direct
+split out (`/logs/stream/{proxy,upstream,http}`, `/api/events/logs`), the
+hardware tab upstream v262 added (Intel and Apple details), or direct
 requests to `/api/captures/{id}`.
 
 ## Previously included
