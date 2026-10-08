@@ -112,6 +112,38 @@ describe("api store event handling", () => {
     expect(get(models).map((model) => model.id)).toEqual(["zeta", "alpha"]);
   });
 
+  it("tracks loading progress without disturbing configured order", () => {
+    const feed = (list: unknown[]) => handleAPIEventMessage(JSON.stringify({
+      type: "modelStatus",
+      data: JSON.stringify(list),
+    }));
+
+    feed([
+      { id: "zeta", name: "Zeta", state: "starting", loadingProgress: 0.1, loadingMessage: "loading" },
+      { id: "alpha", name: "Alpha", state: "ready" },
+    ]);
+    expect(get(models).map((model) => model.id)).toEqual(["zeta", "alpha"]);
+    expect(get(models)[0].loadingProgress).toBe(0.1);
+    expect(get(models)[0].loadingMessage).toBe("loading");
+
+    // progress advances; the listing stays anchored to configured order
+    feed([
+      { id: "zeta", name: "Zeta", state: "starting", loadingProgress: 0.6, loadingMessage: "loading weights" },
+      { id: "alpha", name: "Alpha", state: "ready" },
+    ]);
+    expect(get(models).map((model) => model.id)).toEqual(["zeta", "alpha"]);
+    expect(get(models)[0].loadingProgress).toBe(0.6);
+
+    // transitions to ready: stale progress is cleared
+    feed([
+      { id: "zeta", name: "Zeta", state: "ready" },
+      { id: "alpha", name: "Alpha", state: "stopped" },
+    ]);
+    expect(get(models).map((model) => model.id)).toEqual(["zeta", "alpha"]);
+    expect(get(models)[0].loadingProgress).toBeUndefined();
+    expect(get(models)[0].loadingMessage).toBeUndefined();
+  });
+
   it("parses inflight request entries", () => {
     inFlightRequests.set(0);
     inflightRequestEntries.set([]);
