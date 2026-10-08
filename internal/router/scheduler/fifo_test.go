@@ -476,6 +476,52 @@ func TestFIFO_FreezeSwaps(t *testing.T) {
 			t.Fatalf("reserved[b]=%d want 0", got)
 		}
 	})
+
+	t.Run("starting swap keeps serving waiters while frozen", func(t *testing.T) {
+		eff := newFakeEffects()
+		eff.states["a"] = process.StateStarting
+		eff.states["b"] = process.StateStopped
+		s := newFIFO(&stubPlanner{evict: map[string][]string{"b": {"a"}}}, eff)
+
+		aReq := req("a")
+		s.OnRequest(aReq)
+		assertAdmitted(t, aReq)
+		if got := eff.startsFor("a"); got != 1 {
+			t.Fatalf("StartSwap(a)=%d want 1", got)
+		}
+
+		// The freeze applies to new swaps, not to the startup already in
+		// flight: the same model may still join it.
+		s.SetSwapsFrozen(true)
+		joiner := req("a")
+		s.OnRequest(joiner)
+		assertAdmitted(t, joiner)
+
+		eff.states["a"] = process.StateReady
+		s.OnSwapDone(SwapDone{ModelID: "a"})
+		if got := eff.served("a"); got != 2 {
+			t.Fatalf("served(a)=%d want 2", got)
+		}
+	})
+
+	t.Run("starting target is treated as running when frozen", func(t *testing.T) {
+		eff := newFakeEffects()
+		eff.states["a"] = process.StateStarting
+		eff.states["b"] = process.StateStopped
+		// Freezing a load of b requires evicting the still-starting a.
+		s := newFIFO(&stubPlanner{evict: map[string][]string{"b": {"a"}}}, eff)
+		s.SetSwapsFrozen(true)
+
+		bReq := req("b")
+		s.OnRequest(bReq)
+
+		if err := admitErr(t, bReq); !errors.Is(err, swaputil.ErrSwapsFrozen) {
+			t.Fatalf("admission err=%v want ErrSwapsFrozen", err)
+		}
+		if got := eff.startsFor("b"); got != 0 {
+			t.Fatalf("StartSwap(b)=%d want 0", got)
+		}
+	})
 }
 
 // TestFIFO_OverlappingEvictSetsDoNotRunInParallel verifies two swaps with
