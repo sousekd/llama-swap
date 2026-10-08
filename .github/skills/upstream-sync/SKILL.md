@@ -253,17 +253,23 @@ delete it after merge or closure.
 2. Fetch both remotes and verify that `upstream/main` still points to the
    reviewed SHA.
 3. Record:
-   - old `main`, staging, stable, and candidate SHAs;
+  - old `main`, staging, stable, and candidate SHAs, including live remote
+    SHAs from `git ls-remote` for push leases;
    - the candidate merge list;
    - the first-parent local replay list;
-   - working-tree and stash state.
-4. Capture format, static-analysis, Go-test, and UI-test baselines. Upstream
-   failures are not sync regressions, but they must be reported.
+  - working-tree, worktree, and stash state.
+4. Capture fresh format, static-analysis, Go-test, and UI-test baselines on old
+  staging and the reviewed upstream in a detached worktree. Prior sync notes
+  are clues, not a failure allowlist. Report confirmed baseline failures.
 5. Preserve dirty work as described above.
 
-Compute the upstream label from the newest tag merged into upstream. Use
-`vNNN-plus-N` when commits exist beyond that tag, or `sha-<short>` when no tag
-exists.
+Keep a journal under `build/` with pinned refs, commit mappings, command exit
+codes, and completed checkpoints. Resume from that evidence, not by restarting
+ref-changing steps.
+
+Derive the upstream label with `git describe --tags <reviewed-upstream-SHA>`.
+Use `vNNN-plus-N` for the tag distance, not the number of newly fetched commits,
+or `sha-<short>` when no tag exists.
 
 ### 2. Create the rollback tag
 
@@ -273,7 +279,13 @@ git tag -a fork-pre-<label> release/staging \
 git push origin fork-pre-<label>
 ```
 
-The tag is permanent. Verify the remote object before rewriting any branch.
+The tag is permanent; never overwrite it. Before rewriting any branch, verify
+both its object and peeled commit remotely, and its target locally:
+
+```bash
+git ls-remote --tags origin "refs/tags/fork-pre-<label>*"
+git rev-list -n 1 fork-pre-<label>
+```
 
 ### 3. Advance `main`
 
@@ -293,15 +305,21 @@ For each durable `candidate/*` branch:
 1. Start from the new `main`.
 2. Reapply or rebase only that candidate's commits.
 3. Treat conflicts as feature ports: preserve intent on the new owning code,
-   not stale surrounding text.
+  not stale surrounding text. For test-file add/add conflicts, retain both
+  suites and reconcile their imports/helpers rather than choosing one side.
 4. Verify the candidate has no local-only imports, docs, configuration, or
    assumptions.
 5. Run focused and full relevant validation.
-6. Review, then update the remote candidate with `--force-with-lease` when its
-   history changed.
+6. Review, then push changed history with
+  `--force-with-lease=refs/heads/candidate/<name>:<old-remote-SHA>`.
+  Stop on lease rejection and verify the new live remote SHA.
 
 A candidate must build and test independently. Do not use another candidate or
 the PIN/local delta to make it pass.
+
+If an old first-parent test commit belongs entirely to a candidate, transfer it
+there with an explicit mapping and omit it from local replay. Keep each test
+exactly once; mixed-ownership changes require a reviewed split.
 
 ### 5. Build the integration branch
 
@@ -312,7 +330,8 @@ git merge --no-ff candidate/<second> -m "Merge candidate/<second>"
 ```
 
 Use a stable documented order. Validate after each merge. Candidate branches
-must remain independent even though staging composes them.
+must remain independent even though staging composes them. Verify each merge's
+second parent is the reviewed candidate tip.
 
 ### 6. Replay local-only commits
 
@@ -354,7 +373,8 @@ features, and previously retired features accurately.
 ### 8. Validate
 
 Derive focused tests from each changed commit. Then run the complete available
-suite.
+suite. Run commands separately and retain complete output and actual exit
+codes; truncated pipelines or a trailing successful command can hide failures.
 
 Linux/macOS:
 
@@ -363,7 +383,9 @@ gofmt -l .
 make test-dev
 make test-all
 go build ./...
-cd ui && npm run check && npm test && npm run build
+npm --prefix ui run check
+npm --prefix ui test
+npm --prefix ui run build
 ```
 
 Windows in this repository:
@@ -372,6 +394,8 @@ Windows in this repository:
 .dev/check-go-format.ps1
 go test -short -count=1 ./internal/...
 go test -race -count=1 -short ./internal/...
+go test -race -count=1 ./internal/...
+go test -count=1 .
 staticcheck ./internal/...
 go build ./...
 npm --prefix ui run check
@@ -379,12 +403,33 @@ npm --prefix ui test
 npm --prefix ui run build
 ```
 
-Build `build/simple-responder.exe` if proxy tests request it. Compare all
-warnings and failures with the captured upstream/pre-sync baseline. Do not fix
-unrelated upstream noise in a sync.
+Prepare dependencies in each validation worktree and build its test responder
+(`go build -o build/simple-responder.exe ./cmd/simple-responder` on Windows).
+Required tests skipped for a missing fixture are not a pass. After the UI
+production build, build the root app with `-tags embed_ui` into `build/`.
+
+Compare failures by test/diagnostic and message, not line numbers or total test
+counts across different candidate compositions. For an unexplained failure,
+retain its trace and repeat the focused check on integration and the relevant
+upstream/pre-sync baseline under the same conditions. Passing reruns alone do
+not establish an upstream flake. Do not fix unrelated baseline noise here.
+
+Known Windows pitfalls (reconfirm each sync, never blanket-ignore failures):
+
+- `cmd/vllm-wrapper` uses Unix `syscall.Kill`; a full-package build may fail
+  while the supported root app builds successfully. Report both results.
+- Staticcheck may report unused platform-specific symbols; UI tests may expose
+  path-separator assumptions. Match fresh baseline diagnostics, not old counts.
+- Use `go test .` for the root package, not an individual `_test.go` file,
+  which omits its production source files.
+- Quote Git brace expressions in PowerShell; prefer `git rev-list -n 1 <tag>`
+  and the quoted `ls-remote` pattern above for rollback verification.
+- Bound both request and stream-read timeouts in SSE smoke scripts. Nested
+  PowerShell `Start-Job` readers can hang; prefer a bounded inline reader.
 
 Manually exercise user-visible interactions when automated tests cannot cover
-them. A production build alone is not a smoke test.
+them. A production build alone is not a smoke test. Report missing runtime or
+platform coverage explicitly before asking for promotion approval.
 
 ### 9. Mandatory integration review checkpoint
 
@@ -406,7 +451,7 @@ Also report:
 - old-to-new commit mapping;
 - candidate branch and remote SHAs;
 - conflicts and their semantic resolutions;
-- focused/full test results and known baseline failures;
+- focused/full test results, confirmed baseline failures, and validation gaps;
 - stable branch SHA and the fact that it was not moved.
 
 Push the integration branch only when useful for review; do not open or draft a
@@ -415,15 +460,22 @@ checkpoint.
 
 ### 10. Promote staging after approval
 
+Fetch origin again and compare live staging, stable, and candidate SHAs with the
+reviewed inventory. Require a clean worktree and the approved integration tip;
+stop on drift. Verify staging is not checked out in another worktree. While on
+the integration branch, substitute the recorded full remote staging SHA below:
+
 ```bash
+git branch -f release/staging sync/upstream-<label>
 git switch release/staging
-git reset --hard sync/upstream-<label>
-git push --force-with-lease origin release/staging
+git push --force-with-lease=refs/heads/release/staging:<old-remote-staging-SHA> origin release/staging
 git branch --set-upstream-to=origin/release/staging release/staging
 ```
 
-Never use plain `--force`. Verify local and remote staging SHAs and clean status.
-Do not move `release/stable` unless separately requested.
+Never use plain `--force` or refresh a rejected lease to retry. Preserve the
+reviewed branch and report concurrent changes. Verify live staging equals the
+approved tip, the worktree is clean, and stable is unchanged. Do not move
+`release/stable` unless separately requested.
 
 ### 11. Cleanup
 
@@ -432,8 +484,8 @@ After successful promotion:
 - keep every unresolved `candidate/*` branch;
 - keep a real `open-pr/*` branch only while its PR is open;
 - permanently keep all `fork-pre-*` tags;
-- delete `sync/*`, `test/*`, and `local/*` branches and worktrees after their
-  content is preserved;
+- delete only this execution's temporary branches, worktrees, and fixture
+  processes after their content and evidence are preserved;
 - drop consumed preservation stashes;
 - prune both remotes;
 - finish on clean `release/staging` tracking `origin/release/staging`.
