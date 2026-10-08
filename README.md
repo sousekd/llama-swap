@@ -1,62 +1,57 @@
 # llama-swap fork
 
-This repository tracks
-[mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap) with a
-small, explicitly classified set of changes. See the upstream repository for
-installation instructions and general documentation.
+This fork tracks [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap)
+with a small set of isolated changes. See upstream for installation and general
+documentation, and the [sync workflow](.github/skills/upstream-sync/SKILL.md) for
+fork maintenance.
 
 ## Upstream candidates
 
-These changes are reviewed, independently testable candidates for upstream.
-They do not imply that an upstream issue or pull request exists. Each candidate
-lives on a branch based directly on upstream `main`; `release/staging` merges
-those branches for combined testing.
+Each candidate is independently testable on upstream `main`;
+`release/staging` merges them for combined testing. A candidate branch does not
+imply an upstream issue or pull request exists.
 
 ### Model action errors
 
 Branch: `candidate/model-action-errors`
 
-Failed model load and unload actions now display a dismissible error dialog in
-the Models UI. When the server returns an OpenAI-compatible error envelope, the
-dialog includes its message; malformed or empty responses fall back to the HTTP
-status. Pending load state is still cleared before the failure reaches the UI.
+Failed model loads and unloads display a dismissible dialog in the Models UI.
+It shows the server's error message when available, otherwise the HTTP status.
+Pending load state is cleared before the failure reaches the UI.
 
 ### Swap freeze
 
 Branch: `candidate/freeze-swaps`
 
-The snowflake button in the sidebar freezes request-driven model swaps. While
-it is active, a request that would unload a running model is rejected with HTTP
-409. Requests for already running models and loads that do not require an
-eviction continue normally.
+The sidebar's snowflake button freezes request-driven swaps: requests requiring
+an eviction return HTTP 409; already running models and eviction-free loads
+continue normally.
 
-The freeze is runtime-only and resets to off after restart or configuration
-reload. It does not cancel a swap already in progress, prevent TTL expiry,
-block manual unloads, or affect shutdown. The control is independent of the
-admin PIN.
+Freeze resets after restart or configuration reload. It does not cancel an
+active swap, prevent TTL expiry, block manual unloads, or affect shutdown, and
+is independent of the admin PIN.
 
-The same state is available through `GET /api/freeze` and can be changed with
-`PUT /api/freeze` using `{"frozen": true}` or `{"frozen": false}`.
+Read it with `GET /api/freeze`; change it with `PUT /api/freeze` using
+`{"frozen": true}` or `{"frozen": false}`.
 
 ### Chat stream speed estimates
 
 Branch: `candidate/chat-stream-speed-estimates`
 
-Activity metrics can estimate prompt and generation speeds for streamed Chat
-Completions when the upstream does not report native timing metrics. Estimates
-combine proxy-observed output arrival times with exact token counts from a
-standard final usage chunk; native rates remain preferred per field.
+Activity estimates prompt and generation speeds for streamed Chat Completions
+from observed arrival times and token counts in the final usage chunk. Native
+rates take precedence per field.
 
 Clients must request `stream_options.include_usage` when their backend does not
 send final usage by default. Buffering and chunk batching affect accuracy, and
-compressed, incomplete, or usage-free streams leave rates unavailable.
-llama-swap does not rewrite requests to enable usage reporting.
+compressed, incomplete, or usage-free streams cannot supply estimates.
+Requests are not rewritten to enable usage reporting.
 
 ### Configured model order
 
 Branch: `candidate/model-config-order`
 
-Model declaration order in YAML now controls automatic `${PORT}` allocation
+Model declaration order in YAML controls automatic `${PORT}` allocation
 and presentation in `/v1/models`, `/models`, `/running`, and the web UI. Alias
 entries stay beside their model, while peers and other virtual entries remain
 deterministic after configured local models.
@@ -75,29 +70,24 @@ An optional `adminPin` setting adds a UI lock for Activity capture details:
 adminPin: "1234"
 ```
 
-- Without `adminPin`, the UI behaves like upstream.
-- With it, viewing captured request and response bodies requires a PIN unlock.
-- The unlocked state lasts for the current browser session.
-
-This is a lightweight privacy barrier, not authentication. Activity metrics
-and other pages remain visible, and capture data is not independently
-protected at the API level. See
+Unlock lasts for the browser session. Without `adminPin`, the UI behaves like
+upstream. This is a lightweight privacy barrier, not authentication; metrics
+and other pages remain visible. See
 [discussion #640](https://github.com/mostlygeek/llama-swap/discussions/640).
 
-`adminPin` protects only the Activity capture View control. It does not restrict
-`/metrics`, `/api/mcp`, Tailcat admin access, the log streams upstream v259
-split out (`/logs/stream/{proxy,upstream,http}`, `/api/events/logs`), the
-hardware tab upstream v262 added (Intel and Apple details), or direct
-requests to `/api/captures/{id}`.
+`adminPin` protects only the Activity capture View control. It does NOT restrict
+access to any API.
 
 ## Previously included
 
 Fork features removed after upstream gained equivalent behavior:
 
-- **Startup profile hook:** contributed upstream and available natively since the merge of [PR #1053](https://github.com/mostlygeek/llama-swap/pull/1053). Takes `hooks.on_startup.profile` with any configured profile name; see [issue #992](https://github.com/mostlygeek/llama-swap/issues/992) for the design discussion, and note the earlier top-level proposal in [PR #993](https://github.com/mostlygeek/llama-swap/pull/993) was closed in favor of this shape. No fork migration is needed: configurations using `hooks.on_startup.profile` keep working identically on upstream code.
-- **Runtime alias profiles:** removed in the v244 sync after upstream shipped native profiles in [PR #935](https://github.com/mostlygeek/llama-swap/pull/935). Old fork configurations used `aliases:` inside profiles; current upstream configurations use `pins:`.
-- **Bidirectional group exclusivity:** removed after the upstream `matrix:` solver proved suitable for the same scheduling use cases. See [issue #215](https://github.com/mostlygeek/llama-swap/issues/215) and [PR #631](https://github.com/mostlygeek/llama-swap/pull/631).
-- **Pool-scoped group exclusivity:** removed for the same reason. See [issue #632](https://github.com/mostlygeek/llama-swap/issues/632).
-- **Profile target actions:** contributed upstream and available natively since the merge of [PR #1170](https://github.com/mostlygeek/llama-swap/pull/1170). Each mapping in the active profile card links to its resolved target model by canonical ID, shows the status dot for local models, and offers the load/unload button; selector and peer targets keep their plain/limited forms. No fork migration is needed.
-
-The fork stays close to upstream and keeps each active feature isolated so it can be removed cleanly if upstream gains equivalent behavior.
+- **Startup profile hook:** native `hooks.on_startup.profile`
+	([PR #1053](https://github.com/mostlygeek/llama-swap/pull/1053)).
+- **Runtime alias profiles:** use upstream profile `pins:` instead of the
+	former `aliases:` ([PR #935](https://github.com/mostlygeek/llama-swap/pull/935)).
+- **Group exclusivity:** use upstream `matrix:` for
+	[bidirectional](https://github.com/mostlygeek/llama-swap/issues/215) and
+	[pool-scoped](https://github.com/mostlygeek/llama-swap/issues/632) constraints.
+- **Profile target actions:** native in upstream
+	([PR #1170](https://github.com/mostlygeek/llama-swap/pull/1170)).
