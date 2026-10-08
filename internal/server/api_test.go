@@ -1020,6 +1020,64 @@ func TestServer_ModelStatus_LoadingProgress(t *testing.T) {
 	}
 }
 
+// A dashboard that preserves configured order must not lose the loading
+// metadata upstream attaches to a starting model.
+func TestServer_ModelStatus_LoadingProgress_PreservesConfiguredOrder(t *testing.T) {
+	cfg, err := config.LoadConfigFromReader(strings.NewReader(`
+models:
+  zeta:
+    cmd: echo zeta
+    proxy: http://127.0.0.1:9002
+  alpha:
+    cmd: echo alpha
+    proxy: http://127.0.0.1:9001
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Peers = config.PeerDictionaryConfig{
+		"z-peer": {Models: []string{"second", "first"}},
+		"a-peer": {Models: []string{"only"}},
+	}
+
+	progress := 0.42
+	lp := &process.LoadingProgress{Progress: &progress, Message: "loading tensors"}
+	local := newStubRouter(nil, "")
+	local.running = map[string]process.ProcessState{
+		"zeta":  process.StateStarting,
+		"alpha": process.StateReady,
+	}
+	local.loading = map[string]*process.LoadingProgress{"zeta": lp, "alpha": lp}
+	s := newTestServer(local, newStubRouter(nil, ""))
+	s.cfg = cfg
+
+	status := s.modelStatus()
+	statusIDs := make([]string, 0, len(status))
+	for _, m := range status {
+		statusIDs = append(statusIDs, m.Id)
+	}
+	// Configured order for locals, then deterministic peers.
+	wantStatus := []string{"zeta", "alpha", "a-peer/only", "z-peer/second", "z-peer/first"}
+	if !stringSliceEqual(statusIDs, wantStatus) {
+		t.Fatalf("status IDs = %v, want %v", statusIDs, wantStatus)
+	}
+
+	byID := make(map[string]apiModel, len(status))
+	for _, m := range status {
+		byID[m.Id] = m
+	}
+	if byID["zeta"].LoadingProgress == nil || *byID["zeta"].LoadingProgress != progress || byID["zeta"].LoadingMessage != "loading tensors" {
+		t.Errorf("zeta: progress = %v, message = %q, want %v and %q", byID["zeta"].LoadingProgress, byID["zeta"].LoadingMessage, progress, "loading tensors")
+	}
+	// Ready and stopped models report no stale progress even though the stub
+	// still carries it.
+	for _, id := range []string{"alpha", "a-peer/only", "z-peer/second", "z-peer/first"} {
+		if m := byID[id]; m.LoadingProgress != nil || m.LoadingMessage != "" {
+			t.Errorf("%s: progress = %v, message = %q, want neither", id, m.LoadingProgress, m.LoadingMessage)
+		}
+	}
+}
+
 func stringSliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
