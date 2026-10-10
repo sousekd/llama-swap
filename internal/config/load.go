@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -25,7 +24,7 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		return Config{}, err
 	}
 
-	raw, macroConfig, err := resolveConfigMacros(yamlStr)
+	raw, macroConfig, modelOrder, err := resolveConfigMacros(yamlStr)
 	if err != nil {
 		return Config{}, err
 	}
@@ -54,8 +53,10 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 	if err = node.Decode(&config); err != nil {
 		return Config{}, err
 	}
+	config.modelOrder = modelOrder
 	config.Macros = macroConfig.Macros
-	for modelID, modelConfig := range config.Models {
+	for _, modelID := range config.OrderedModelIDs() {
+		modelConfig := config.Models[modelID]
 		modelConfig.Macros = macroConfig.Models[modelID].Macros
 		config.Models[modelID] = modelConfig
 	}
@@ -115,7 +116,8 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 
 	// Populate the aliases map
 	config.aliases = make(map[string]string)
-	for modelName, modelConfig := range config.Models {
+	for _, modelName := range config.OrderedModelIDs() {
+		modelConfig := config.Models[modelName]
 		for _, alias := range modelConfig.Aliases {
 			if _, found := config.aliases[alias]; found {
 				return Config{}, fmt.Errorf("duplicate alias %s found in model: %s", alias, modelName)
@@ -124,14 +126,7 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		}
 	}
 
-	// Sort model IDs for deterministic validation and normalization.
-	modelIds := make([]string, 0, len(config.Models))
-	for modelId := range config.Models {
-		modelIds = append(modelIds, modelId)
-	}
-	sort.Strings(modelIds)
-
-	for _, modelId := range modelIds {
+	for _, modelId := range config.OrderedModelIDs() {
 		modelConfig := config.Models[modelId]
 		modelConfig.HealthCheckTimeout = config.HealthCheckTimeout
 		if modelId == ComfyUIModelID {
