@@ -14,6 +14,14 @@ export const playgroundTabs: { id: PlaygroundTab; label: string }[] = [
 
 export const selectedPlaygroundTab = persistentStore<PlaygroundTab>("playground-selected-tab", "chat");
 
+export const selectedPlaygroundModel = persistentStore<string>("playground-selected-model", "");
+
+/** Open the Playground on the Chat tab with `modelId` selected. */
+export function showModelInPlayground(modelId: string): void {
+  selectedPlaygroundModel.set(modelId);
+  selectedPlaygroundTab.set("chat");
+}
+
 /**
  * Drop a stored tab that no longer exists.
  *
