@@ -39,6 +39,7 @@ type stubRouter struct {
 	unloadTimeout time.Duration
 	onUnload      func()
 	loggers       map[string]*logmon.Monitor
+	frozen        atomic.Bool
 }
 
 func newStubRouter(models []string, response string) *stubRouter {
@@ -68,6 +69,8 @@ func (s *stubRouter) RunningStatus() map[string]process.Status {
 	}
 	return out
 }
+func (s *stubRouter) SwapsFrozen() bool          { return s.frozen.Load() }
+func (s *stubRouter) SetSwapsFrozen(frozen bool) { s.frozen.Store(frozen) }
 func (s *stubRouter) Unload(timeout time.Duration, models ...string) {
 	s.unloadCalls.Add(1)
 	s.unloadTimeout = timeout
