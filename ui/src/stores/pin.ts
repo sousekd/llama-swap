@@ -1,4 +1,5 @@
 import { writable, derived } from "svelte/store";
+import { apiUrl } from "../lib/apiPath";
 
 export const pinRequired = writable(false);
 
@@ -16,7 +17,7 @@ export const isLocked = derived([pinRequired, pinVerified], ([$req, $ver]) => $r
 
 export async function verifyPin(pin: string): Promise<boolean> {
   try {
-    const res = await fetch("/api/verify-pin", {
+    const res = await fetch(apiUrl("/api/verify-pin"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pin }),
