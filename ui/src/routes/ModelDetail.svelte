@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { params } from "svelte-spa-router";
+  import { params, link } from "svelte-spa-router";
   import { models } from "../stores/api";
   import { loadingMessage, loadingPercent, statusDotColor } from "../stores/modelLoad";
   import type { Model } from "../lib/types";
@@ -7,11 +7,12 @@
   import CopyableId from "../components/CopyableId.svelte";
   import * as Card from "$lib/components/ui/card/index.js";
   import { Tabs, TabsList, TabsTrigger, TabsContent } from "$lib/components/ui/tabs/index.js";
-  import { ExternalLink } from "@lucide/svelte";
+  import { ExternalLink, MessageSquare } from "@lucide/svelte";
   import ModelActivityTab from "../components/model/ModelActivityTab.svelte";
   import ModelLogsTab from "../components/model/ModelLogsTab.svelte";
   import ModelDetailsTab from "../components/model/ModelDetailsTab.svelte";
   import { modelServerPath } from "../lib/modelUtils";
+  import { showModelInPlayground } from "../stores/playground";
   import { formatAbsoluteTime, formatUptime } from "../lib/format";
 
   let modelId = $derived($params?.id ?? "");
@@ -83,6 +84,18 @@
             </div>
           </div>
           <div class="flex shrink-0 items-center gap-2">
+            {#if !model.unlisted}
+              <a
+                href="/playground"
+                use:link
+                class="text-muted-foreground hover:text-foreground"
+                title="Open in Playground"
+                aria-label="Open in Playground"
+                onclick={() => showModelInPlayground(resolvedId)}
+              >
+                <MessageSquare class="size-4" />
+              </a>
+            {/if}
             {#if !model.peerID}
               <a
                 href={modelServerPath(resolvedId)}
