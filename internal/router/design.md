@@ -57,9 +57,9 @@ for {
 }
 ```
 
-Every `Scheduler` method runs on this one goroutine. That is the single most
-important fact about the design: **the scheduler never needs a mutex for its own
-state**. All scheduler state is touched only from these callbacks, which are
+Every event-handling `Scheduler` method runs on this one goroutine. That is the
+single most important fact about the design: **the scheduler never needs a mutex
+for its own state**. All scheduler state is touched only from these callbacks, which are
 serialized by the run loop. If you write a new scheduler, you get the same
 guarantee for free — and you must not break it by spinning up goroutines that
 mutate scheduler state.
@@ -130,6 +130,26 @@ a target, it cancels and joins that target's swap so the old goroutine cannot
 restart the process after it has been stopped. Cancellation also releases a
 goroutine waiting to send its completion, without needing the run loop to
 receive it.
+
+### Swap freeze
+
+`FIFO` supports a runtime freeze of request-driven swaps. While frozen, a
+request whose planned eviction set is non-empty is rejected with
+`swaputil.ErrSwapsFrozen` (HTTP 409) before admission, including requests that
+are already queued. Running models keep serving, swaps already in flight keep
+their waiters, and eviction-free loads still start. The guard is checked in
+`OnRequest`, in `drainQueue`, and once more at the top of `startSwap` as a
+backstop against a freeze that lands mid-decision.
+
+Because freeze belongs to the scheduler, it covers every planner. With
+`capacitySwapper` a non-empty eviction set means the pools are exhausted rather
+than that the target must run exclusively, so a frozen capacity router also
+refuses loads that would exceed the budget.
+
+`SwapsFrozen` and `SetSwapsFrozen` are the one exception to "no locks": HTTP
+handlers call them, not the run loop, so implementations must synchronize their
+state themselves (`FIFO` uses an atomic flag). They must never cancel a swap:
+freeze only declines new evictions.
 
 ### `doSwap` never decides from a process state snapshot
 
