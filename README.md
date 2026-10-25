@@ -27,6 +27,12 @@ The sidebar's snowflake button freezes request-driven swaps: requests requiring
 an eviction return HTTP 409; already running models and eviction-free loads
 continue normally.
 
+Both `router.use: group` and `router.use: capacity` honor the freeze. In
+capacity mode a request that must evict to fit its pools receives the same 409.
+The guard runs before the scheduler assigns a swap generation, so freezing
+never cancels or interrupts a swap that is already in flight, and the UI
+control resolves API paths through upstream's base-path helper.
+
 Freeze resets after restart or configuration reload. It does not cancel an
 active swap, prevent TTL expiry, block manual unloads, or affect shutdown, and
 is independent of the admin PIN.
@@ -58,7 +64,9 @@ deterministic after configured local models.
 
 Reordering models can change automatically assigned ports. Configurations that
 expose fixed ports to other services should use explicit values in both `cmd`
-and `proxy`.
+and `proxy`. Under `router.use: capacity` the order still drives `${PORT}`
+allocation and presentation, but pool membership and eviction planning are
+unaffected.
 
 ## Fork-only changes
 
@@ -72,7 +80,9 @@ adminPin: "1234"
 
 Unlock lasts for the browser session. Without `adminPin`, the UI behaves like
 upstream. This is a lightweight privacy barrier, not authentication; metrics
-and other pages remain visible. See
+and other pages remain visible. The UI resolves the endpoints through upstream's
+base-path helper, so the lock also works when llama-swap is served under a path
+prefix. See
 [discussion #640](https://github.com/mostlygeek/llama-swap/discussions/640).
 
 `adminPin` protects only the Activity capture View control. It does NOT restrict
