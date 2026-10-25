@@ -68,6 +68,14 @@ and `proxy`. Under `router.use: capacity` the order still drives `${PORT}`
 allocation and presentation, but pool membership and eviction planning are
 unaffected.
 
+### Open in Playground
+
+Branch: `candidate/playground-link`
+
+The model detail page opens the Playground with that model preselected in the
+Chat tab. Unlisted models keep no Playground action because the Playground only
+selects from the `/v1/models` listing, which omits them.
+
 ## Fork-only changes
 
 ### Admin PIN lock
