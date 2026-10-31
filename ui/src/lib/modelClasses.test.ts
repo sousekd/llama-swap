@@ -121,9 +121,9 @@ describe("groupModelsByClass", () => {
     expect(groups.every((g) => g.models.length === 0)).toBe(true);
   });
 
-  it("sorts each group with locale-aware numeric compare", () => {
-    // ASCII order would put every uppercase ID before lowercase ones, so
-    // gemma-4 lands after Qwen3.5; localeCompare orders them together.
+  it("preserves the caller's order inside each group", () => {
+    // The backend returns configured (params.yaml declaration) order, so the
+    // group keeps the listing order instead of sorting by ID.
     const groups = groupModelsByClass([
       { ...fixture({ function_calling: true }, ["text"], ["text"]), id: "Qwen3.8-27B" },
       { ...fixture({ vision: true }, ["text"], ["text", "image"]), id: "gemma-4-26B-A4B" },
@@ -132,10 +132,10 @@ describe("groupModelsByClass", () => {
     ]);
     const chat = groups.find((g) => g.class === "chat");
     expect(chat?.models.map((m) => m.id)).toEqual([
-      "Artemis-31B",
-      "gemma-4-26B-A4B",
-      "Qwen3.5-9B",
       "Qwen3.8-27B",
+      "gemma-4-26B-A4B",
+      "Artemis-31B",
+      "Qwen3.5-9B",
     ]);
   });
 

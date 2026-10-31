@@ -4,7 +4,7 @@ summary: Global and per-model macros, environment variable macros, and the order
 category: guides
 tags: [macros, env, dry, substitution]
 config_keys: [macros, models.*.macros, startPort]
-updated: 2026-09-20
+updated: 2026-10-31
 ---
 
 # Reusing configuration with macros
@@ -75,8 +75,10 @@ models:
 ```
 
 The same order appears in `/v1/models`, `/models`, `/running`, and the web UI.
-When multiple configuration sources are used, files are processed by filename
-and declarations keep their order within each file.
+The Models list keeps it inside each capability section and in the unified
+list shown when Categories is off. When multiple configuration sources are
+used, files are processed by filename and declarations keep their order within
+each file.
 
 Reordering models can therefore change their automatically assigned ports. If
 another service depends on a fixed port, write that port explicitly in `cmd`
