@@ -396,7 +396,9 @@ func (b *baseRouter) Handles(model string) bool {
 
 // SwapsFrozen and SetSwapsFrozen delegate the swap-freeze guard to the
 // scheduler, which owns the per-request eviction policy. The state lives with
-// the scheduler so it applies to every path that can trigger a swap.
+// the scheduler so it covers every scheduler path that can decide a swap:
+// admission, draining queued requests, and startSwap. It is not a global
+// start gate; the inference pause owns that separate layer.
 func (b *baseRouter) SwapsFrozen() bool {
 	return b.schedule.SwapsFrozen()
 }
