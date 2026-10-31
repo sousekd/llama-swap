@@ -40,6 +40,11 @@ is independent of the admin PIN.
 Read it with `GET /api/freeze`; change it with `PUT /api/freeze` using
 `{"frozen": true}` or `{"frozen": false}`.
 
+Upstream's pause/resume is a different control: pause unloads every local model
+and rejects all local inference with HTTP 503, while freeze leaves the resident
+models serving and declines only evictions. Pause wins when both are active,
+and it survives a config reload; freeze does not.
+
 ### Chat stream speed estimates
 
 Branch: `candidate/chat-stream-speed-estimates`
