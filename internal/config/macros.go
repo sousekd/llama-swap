@@ -5,7 +5,6 @@ import (
 	"os"
 	"reflect"
 	"regexp"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -24,6 +23,60 @@ type modelMacroConfig struct {
 type configMacroConfig struct {
 	Macros MacroList                   `yaml:"macros"`
 	Models map[string]modelMacroConfig `yaml:"models"`
+}
+
+type modelOrderConfig struct {
+	Models modelIDOrder `yaml:"models"`
+}
+
+type modelIDOrder []string
+
+func (ids *modelIDOrder) UnmarshalYAML(value *yaml.Node) error {
+	ordered := make([]string, 0, len(value.Content)/2)
+	if err := appendMappingKeys(value, &ordered, make(map[string]struct{})); err != nil {
+		return fmt.Errorf("models: %w", err)
+	}
+	*ids = ordered
+	return nil
+}
+
+func appendMappingKeys(value *yaml.Node, ordered *[]string, seen map[string]struct{}) error {
+	if value.Kind == yaml.AliasNode {
+		return appendMappingKeys(value.Alias, ordered, seen)
+	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected a mapping")
+	}
+
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		keyNode := value.Content[i]
+		valueNode := value.Content[i+1]
+		if keyNode.Value == "<<" {
+			if valueNode.Kind == yaml.SequenceNode {
+				for _, merged := range valueNode.Content {
+					if err := appendMappingKeys(merged, ordered, seen); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if err := appendMappingKeys(valueNode, ordered, seen); err != nil {
+				return err
+			}
+			continue
+		}
+
+		var key string
+		if err := keyNode.Decode(&key); err != nil {
+			return err
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		*ordered = append(*ordered, key)
+		seen[key] = struct{}{}
+	}
+	return nil
 }
 
 // validateMacro validates macro name and value constraints
@@ -60,7 +113,7 @@ func validateMacro(name string, value any) error {
 // resolveConfigMacros expands all non-environment macros before the typed
 // configuration is decoded. Decoding into untyped values first materializes
 // YAML aliases and preserves scalar macro values.
-func resolveConfigMacros(yamlStr string) (map[string]any, configMacroConfig, error) {
+func resolveConfigMacros(yamlStr string) (map[string]any, configMacroConfig, []string, error) {
 	// Environment macros have already been expanded by LoadConfigFromReader.
 	// From here the flow is:
 	//
@@ -79,7 +132,11 @@ func resolveConfigMacros(yamlStr string) (map[string]any, configMacroConfig, err
 	// field types.
 	var declarations configMacroConfig
 	if err := yaml.Unmarshal([]byte(yamlStr), &declarations); err != nil {
-		return nil, configMacroConfig{}, err
+		return nil, configMacroConfig{}, nil, err
+	}
+	var ordering modelOrderConfig
+	if err := yaml.Unmarshal([]byte(yamlStr), &ordering); err != nil {
+		return nil, configMacroConfig{}, nil, err
 	}
 
 	// Validate declarations before touching the value tree. This produces
@@ -87,20 +144,20 @@ func resolveConfigMacros(yamlStr string) (map[string]any, configMacroConfig, err
 	// entering the ordinary replacement list.
 	for _, macro := range declarations.Macros {
 		if err := validateMacro(macro.Name, macro.Value); err != nil {
-			return nil, configMacroConfig{}, err
+			return nil, configMacroConfig{}, nil, err
 		}
 	}
 	for modelID, model := range declarations.Models {
 		for _, macro := range model.Macros {
 			if err := validateMacro(macro.Name, macro.Value); err != nil {
-				return nil, configMacroConfig{}, fmt.Errorf("model %s: %s", modelID, err)
+				return nil, configMacroConfig{}, nil, fmt.Errorf("model %s: %s", modelID, err)
 			}
 		}
 	}
 
 	var raw map[string]any
 	if err := yaml.Unmarshal([]byte(yamlStr), &raw); err != nil {
-		return nil, configMacroConfig{}, err
+		return nil, configMacroConfig{}, nil, err
 	}
 	if raw == nil {
 		raw = make(map[string]any)
@@ -144,14 +201,9 @@ func resolveConfigMacros(yamlStr string) (map[string]any, configMacroConfig, err
 	// allocation contract.
 	startPort, err := rawStartPort(raw)
 	if err != nil {
-		return nil, configMacroConfig{}, err
+		return nil, configMacroConfig{}, nil, err
 	}
-
-	modelIDs := make([]string, 0, len(models))
-	for modelID := range models {
-		modelIDs = append(modelIDs, modelID)
-	}
-	sort.Strings(modelIDs)
+	modelIDs := orderedKeys(ordering.Models, models)
 
 	nextPort := startPort
 	for _, modelID := range modelIDs {
@@ -168,7 +220,7 @@ func resolveConfigMacros(yamlStr string) (map[string]any, configMacroConfig, err
 		resolved := substituteMacroList(model, macros)
 		model = resolved.(map[string]any)
 		if err := substituteSetParamsByIDKeys(model, macros); err != nil {
-			return nil, configMacroConfig{}, fmt.Errorf("model %s filters.setParamsByID: %w", modelID, err)
+			return nil, configMacroConfig{}, nil, fmt.Errorf("model %s filters.setParamsByID: %w", modelID, err)
 		}
 
 		cmd, _ := model["cmd"].(string)
@@ -180,20 +232,20 @@ func resolveConfigMacros(yamlStr string) (map[string]any, configMacroConfig, err
 			// automatically allocated port. Once allocated, apply it throughout
 			// that model just like a typed macro value.
 			if !cmdHasPort && proxyHasPort {
-				return nil, configMacroConfig{}, fmt.Errorf("model %s: proxy uses ${PORT} but cmd does not - ${PORT} is only available when used in cmd", modelID)
+				return nil, configMacroConfig{}, nil, fmt.Errorf("model %s: proxy uses ${PORT} but cmd does not - ${PORT} is only available when used in cmd", modelID)
 			}
 
 			portMacro := MacroList{{Name: "PORT", Value: nextPort}}
 			resolved = substituteMacroList(model, portMacro)
 			model = resolved.(map[string]any)
 			if err := substituteSetParamsByIDKeys(model, portMacro); err != nil {
-				return nil, configMacroConfig{}, fmt.Errorf("model %s filters.setParamsByID: %w", modelID, err)
+				return nil, configMacroConfig{}, nil, fmt.Errorf("model %s filters.setParamsByID: %w", modelID, err)
 			}
 			nextPort++
 		}
 
 		if err := validateSetParamsByIDKeys(model, modelID); err != nil {
-			return nil, configMacroConfig{}, err
+			return nil, configMacroConfig{}, nil, err
 		}
 		models[modelID] = model
 	}
@@ -203,9 +255,9 @@ func resolveConfigMacros(yamlStr string) (map[string]any, configMacroConfig, err
 	// to survive only in cmdStop for process-time substitution; every other
 	// recognized placeholder must have been resolved by this point.
 	if err := validateConfigMacroUses(raw); err != nil {
-		return nil, configMacroConfig{}, err
+		return nil, configMacroConfig{}, nil, err
 	}
-	return raw, declarations, nil
+	return raw, declarations, modelIDs, nil
 }
 
 func stripRawCommandComments(model map[string]any) {
