@@ -67,6 +67,10 @@ and presentation in `/v1/models`, `/models`, `/running`, and the web UI. Alias
 entries stay beside their model, while peers and other virtual entries remain
 deterministic after configured local models.
 
+The Models list keeps that order inside each capability section and in the
+unified list shown when Categories is off. Sections group by class without
+re-sorting their rows.
+
 Reordering models can change automatically assigned ports. Configurations that
 expose fixed ports to other services should use explicit values in both `cmd`
 and `proxy`. Under `router.use: capacity` the order still drives `${PORT}`
