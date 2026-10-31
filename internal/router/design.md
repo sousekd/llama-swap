@@ -146,6 +146,14 @@ Because freeze belongs to the scheduler, it covers every planner. With
 than that the target must run exclusively, so a frozen capacity router also
 refuses loads that would exceed the budget.
 
+Freeze is narrower than the inference start gate. Upstream's inference pause
+installs a `SetStartGate` check that runs before every swap in
+`baseRouter.StartSwap`, including eviction-free loads, and unloads the resident
+models. Freeze makes an admission decision in the scheduler and never unloads
+anything. HTTP requests for local models are rejected by `serveLocal` while
+paused, before the scheduler sees them, so the pause error wins whenever both
+states are active.
+
 `SwapsFrozen` and `SetSwapsFrozen` are the one exception to "no locks": HTTP
 handlers call them, not the run loop, so implementations must synchronize their
 state themselves (`FIFO` uses an atomic flag). They must never cancel a swap:
