@@ -44,6 +44,7 @@ var (
 	ErrNoPeerModelFound  = fmt.Errorf("peer model not found")
 	ErrNoLocalModelFound = fmt.Errorf("local model not found")
 	ErrInferencePaused   = fmt.Errorf("all inference is paused")
+	ErrSwapsFrozen       = fmt.Errorf("model swaps are frozen")
 )
 
 // IsWebSocketUpgrade reports whether r contains a valid websocket protocol
@@ -185,6 +186,8 @@ func SendError(w http.ResponseWriter, r *http.Request, err error) {
 		SendResponse(w, r, http.StatusNotFound, "no router for requested model")
 	case errors.Is(err, ErrInferencePaused):
 		SendResponse(w, r, http.StatusServiceUnavailable, ErrInferencePaused.Error())
+	case errors.Is(err, ErrSwapsFrozen):
+		SendResponse(w, r, http.StatusConflict, "loading this model would unload a running model while swaps are frozen")
 	default:
 		SendResponse(w, r, http.StatusInternalServerError, fmt.Sprintf("unspecific error: %v", err))
 	}
