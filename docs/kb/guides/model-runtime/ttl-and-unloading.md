@@ -1,10 +1,10 @@
 ---
 title: Automatic model unloading with ttl
-summary: How ttl, globalTTL, unloadTimeout and Docker cmdStop interact, plus how to unload on demand or pause inference.
+summary: How ttl, globalTTL, unloadTimeout and Docker cmdStop interact, plus how to unload on demand, pause inference, or freeze swaps.
 category: guides
-tags: [ttl, unload, vram, memory, idle, docker, container, cmd-stop, pause, resume, gaming]
+tags: [ttl, unload, vram, memory, idle, docker, container, cmd-stop, pause, resume, gaming, freeze, swap]
 config_keys: [globalTTL, unloadTimeout, models.*.ttl, models.*.unloadTimeout, models.*.cmdStop]
-updated: 2026-10-27
+updated: 2026-10-31
 ---
 
 # Automatic model unloading with ttl
@@ -101,6 +101,31 @@ While paused, every request for a local model (`/v1/...`, `/upstream/...`,
 `all inference is paused`, and startup preloading is skipped. Requests that
 are running when you pause are stopped with their model. Peer models are not
 affected. A config reload keeps the pause; restarting llama-swap clears it.
+
+## Freezing swaps
+
+Pause is all-or-nothing. To keep the models that are already loaded serving
+while refusing loads that would evict one of them, freeze swaps instead:
+
+```console
+$ curl -X PUT http://localhost:8080/api/freeze \
+    -H 'Content-Type: application/json' -d '{"frozen": true}'
+$ curl -X PUT http://localhost:8080/api/freeze \
+    -H 'Content-Type: application/json' -d '{"frozen": false}'
+```
+
+`GET /api/freeze` reports the current state, and the sidebar's snowflake
+button toggles it. A request that would evict a running model gets a `409`
+with the message `loading this model would unload a running model while swaps
+are frozen`. Running models keep serving, swaps already in flight are not
+interrupted, loads that fit alongside the resident models still start, and TTL
+expiry and manual unloads still work.
+
+Freeze is narrower than pause: pause unloads everything and rejects all local
+inference with a `503`, while freeze leaves the resident set alone. Freeze
+resets on restart or config reload; pause survives a config reload. When both
+are active, a paused server rejects the request before the swap freeze is
+consulted.
 
 ## Picking a value
 
