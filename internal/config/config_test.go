@@ -196,29 +196,28 @@ func TestConfig_AutomaticPortAssignments(t *testing.T) {
 	})
 
 	t.Run("Automatic port assignments", func(t *testing.T) {
-		content := `
-startPort: 5800
-models:
-  model1:
-    cmd: svr --port ${PORT}
-  model2:
-    cmd: svr --port ${PORT}
-    proxy: "http://172.11.22.33:${PORT}"
-  model3:
-    cmd: svr --port 1999
-    proxy: "http://1.2.3.4:1999"
-`
+		content := "startPort: 5800\n" +
+			"models:\n" +
+			"  model2:\n" +
+			"    cmd: svr --port ${PORT}\n" +
+			"    proxy: \"http://172.11.22.33:${PORT}\"\n" +
+			"  model1:\n" +
+			"    cmd: svr --port ${PORT}\n" +
+			"  model3:\n" +
+			"    cmd: svr --port 1999\n" +
+			"    proxy: \"http://1.2.3.4:1999\"\n"
 		config, err := LoadConfigFromReader(strings.NewReader(content))
 		if !assert.NoError(t, err) {
 			t.Fatalf("Failed to load config: %v", err)
 		}
 
 		assert.Equal(t, 5800, config.StartPort)
-		assert.Equal(t, "svr --port 5800", config.Models["model1"].Cmd)
-		assert.Equal(t, "http://localhost:5800", config.Models["model1"].Proxy)
+		assert.Equal(t, []string{"model2", "model1", "model3"}, config.OrderedModelIDs())
+		assert.Equal(t, "svr --port 5800", config.Models["model2"].Cmd)
+		assert.Equal(t, "http://172.11.22.33:5800", config.Models["model2"].Proxy)
 
-		assert.Equal(t, "svr --port 5801", config.Models["model2"].Cmd)
-		assert.Equal(t, "http://172.11.22.33:5801", config.Models["model2"].Proxy)
+		assert.Equal(t, "svr --port 5801", config.Models["model1"].Cmd)
+		assert.Equal(t, "http://localhost:5801", config.Models["model1"].Proxy)
 
 		assert.Equal(t, "svr --port 1999", config.Models["model3"].Cmd)
 		assert.Equal(t, "http://1.2.3.4:1999", config.Models["model3"].Proxy)
@@ -560,7 +559,7 @@ models:
 	assert.NoError(t, err)
 	sanitizedCmd, err := SanitizeCommand(config.Models["model1"].Cmd)
 	assert.NoError(t, err)
-	assert.Equal(t, "/path/to/server -p 9001 -hf model1", strings.Join(sanitizedCmd, " "))
+	assert.Equal(t, "/path/to/server -p 9000 -hf model1", strings.Join(sanitizedCmd, " "))
 
 	dockerStopMacro, found := config.Macros.Get("docker-stop")
 	assert.True(t, found)
@@ -568,7 +567,7 @@ models:
 
 	sanitizedCmd2, err := SanitizeCommand(config.Models["model2"].Cmd)
 	assert.NoError(t, err)
-	assert.Equal(t, "docker run --name model2 -p 9002:8080 docker_img", strings.Join(sanitizedCmd2, " "))
+	assert.Equal(t, "docker run --name model2 -p 9001:8080 docker_img", strings.Join(sanitizedCmd2, " "))
 
 	sanitizedCmdStop, err := SanitizeCommand(config.Models["model2"].CmdStop)
 	assert.NoError(t, err)
@@ -576,7 +575,24 @@ models:
 
 	sanitizedCmd3, err := SanitizeCommand(config.Models["author/model:F16"].Cmd)
 	assert.NoError(t, err)
-	assert.Equal(t, "/path/to/server -p 9000 -hf author/model:F16", strings.Join(sanitizedCmd3, " "))
+	assert.Equal(t, "/path/to/server -p 9002 -hf author/model:F16", strings.Join(sanitizedCmd3, " "))
+}
+
+func TestConfig_OrderedModelIDs_ReconcilesProgrammaticChanges(t *testing.T) {
+	config := Config{
+		Models: map[string]ModelConfig{
+			"alpha": {},
+			"beta":  {},
+			"zeta":  {},
+		},
+		modelOrder: []string{"zeta", "removed", "zeta"},
+	}
+
+	ordered := config.OrderedModelIDs()
+	assert.Equal(t, []string{"zeta", "alpha", "beta"}, ordered)
+
+	ordered[0] = "changed"
+	assert.Equal(t, []string{"zeta", "alpha", "beta"}, config.OrderedModelIDs())
 }
 
 func TestConfig_TypedMacrosInMetadata(t *testing.T) {
