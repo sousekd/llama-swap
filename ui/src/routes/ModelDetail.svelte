@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { params } from "svelte-spa-router";
+  import { params, link } from "svelte-spa-router";
   import { models } from "../stores/api";
   import { loadingMessage, loadingPercent, statusDotColor } from "../stores/modelLoad";
   import type { Model } from "../lib/types";
@@ -7,11 +7,12 @@
   import CopyableId from "../components/CopyableId.svelte";
   import * as Card from "$lib/components/ui/card/index.js";
   import { Tabs, TabsList, TabsTrigger, TabsContent } from "$lib/components/ui/tabs/index.js";
-  import { ExternalLink } from "@lucide/svelte";
+  import { ExternalLink, MessageSquare } from "@lucide/svelte";
   import ModelActivityTab from "../components/model/ModelActivityTab.svelte";
   import ModelLogsTab from "../components/model/ModelLogsTab.svelte";
   import ModelDetailsTab from "../components/model/ModelDetailsTab.svelte";
   import { modelServerPath } from "../lib/modelUtils";
+  import { showModelInPlayground } from "../stores/playground";
   import { formatAbsoluteTime, formatUptime } from "../lib/format";
 
   let modelId = $derived($params?.id ?? "");
@@ -47,6 +48,11 @@
   // Loading progress the upstream reports through its health check while starting.
   let percent = $derived(loadingPercent(model));
   let message = $derived(loadingMessage(model));
+
+  // Matches ModelLoadButton's "sm" box so the header actions share one rhythm:
+  // equal hit areas and equal gaps between the icons.
+  const iconActionClass =
+    "text-muted-foreground hover:bg-accent hover:text-accent-foreground flex size-5 shrink-0 items-center justify-center rounded-sm";
 </script>
 
 <div class="flex h-full flex-col gap-4 overflow-y-auto p-2">
@@ -83,16 +89,28 @@
             </div>
           </div>
           <div class="flex shrink-0 items-center gap-2">
+            {#if !model.unlisted}
+              <a
+                href="/playground"
+                use:link
+                class={iconActionClass}
+                title="Open in Playground"
+                aria-label="Open in Playground"
+                onclick={() => showModelInPlayground(resolvedId)}
+              >
+                <MessageSquare class="size-3.5" />
+              </a>
+            {/if}
             {#if !model.peerID}
               <a
                 href={modelServerPath(resolvedId)}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="text-muted-foreground hover:text-foreground"
+                class={iconActionClass}
                 title="Open model server"
                 aria-label="Open model server"
               >
-                <ExternalLink class="size-4" />
+                <ExternalLink class="size-3.5" />
               </a>
               <ModelLoadButton {model} size="sm" />
             {/if}
