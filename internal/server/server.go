@@ -529,6 +529,8 @@ func (s *Server) routes() {
 	mux.Handle("GET /api/tailcat", apiChain.ThenFunc(s.handleAPITailcat))
 	mux.Handle("GET /api/peers", apiChain.ThenFunc(s.handleAPIPeers))
 	mux.Handle("POST /api/peers/{peer}/refresh", apiChain.ThenFunc(s.handleAPIRefreshPeer))
+	mux.Handle("GET /api/freeze", apiChain.ThenFunc(s.handleAPIFreeze))
+	mux.Handle("PUT /api/freeze", apiChain.ThenFunc(s.handleAPISetFreeze))
 	mux.Handle("GET /api/captures/{id}", apiChain.ThenFunc(s.handleAPICapture))
 
 	// Stateless MCP server exposing llama-swap's own documentation as tools,

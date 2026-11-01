@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"sync"
@@ -125,6 +126,81 @@ func TestCapacity_UnloadAndRestart(t *testing.T) {
 	require.Equal(t, 200, w.Code)
 	require.Equal(t, process.StateReady, b.State())
 	require.Equal(t, int32(0), a.stopCalls.Load())
+}
+
+// TestCapacity_FreezeSwaps checks that the swap-freeze guard covers
+// capacity-driven eviction, not just model exclusivity: a load that would
+// exceed the pool budget is rejected with 409 while frozen, an eviction-free
+// load still starts, and the resident model keeps serving throughout.
+func TestCapacity_FreezeSwaps(t *testing.T) {
+	a, b, c := newFakeProcess("a"), newFakeProcess("b"), newFakeProcess("c")
+	a.autoReady, b.autoReady, c.autoReady = true, true, true
+	r := newTestBase(t, map[string]process.Process{"a": a, "b": b, "c": c},
+		newCapacityPlanner(10, map[string]int64{"a": 6, "b": 6, "c": 2}, nil))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, newRequest("a"))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, process.StateReady, a.State())
+
+	r.SetSwapsFrozen(true)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, newRequest("b"))
+	require.Equal(t, http.StatusConflict, w.Code)
+	require.Zero(t, b.runCalls.Load(), "frozen router must not start an evicting load")
+	require.Equal(t, process.StateReady, a.State(), "freeze must not stop the resident model")
+
+	// 6+2 fits the pool, so this load evicts nothing and proceeds while frozen.
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, newRequest("c"))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, process.StateReady, c.State())
+
+	r.SetSwapsFrozen(false)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, newRequest("b"))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, process.StateReady, b.State())
+}
+
+// TestCapacity_FreezeDoesNotChangeEvictions keeps the fit selector and the swap
+// freeze as separate layers. Fit ranks targets with Evictions and only then
+// dispatches the winner, so freeze must not skew that ranking: it decides
+// admission, not selection. A fit target that needs no eviction therefore still
+// starts while frozen, and only one that would evict is refused.
+func TestCapacity_FreezeDoesNotChangeEvictions(t *testing.T) {
+	a, b, c := newFakeProcess("a"), newFakeProcess("b"), newFakeProcess("c")
+	a.autoReady, b.autoReady, c.autoReady = true, true, true
+	r := newTestBase(t, map[string]process.Process{"a": a, "b": b, "c": c},
+		newCapacityPlanner(10, map[string]int64{"a": 6, "b": 6, "c": 2}, nil))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, newRequest("a"))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	unfrozen, err := r.Evictions(context.Background(), "b", "c")
+	require.NoError(t, err)
+
+	r.SetSwapsFrozen(true)
+	frozen, err := r.Evictions(context.Background(), "b", "c")
+	require.NoError(t, err)
+	require.Equal(t, unfrozen, frozen, "freeze must not change what fit ranks")
+	require.Equal(t, []string{"a"}, frozen["b"].Models)
+	require.Empty(t, frozen["c"].Models)
+
+	// The eviction-free target fit ranks first still starts while frozen.
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, newRequest("c"))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, process.StateReady, c.State())
+
+	// The target that would evict is refused, and the residents keep serving.
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, newRequest("b"))
+	require.Equal(t, http.StatusConflict, w.Code)
+	require.Zero(t, b.runCalls.Load(), "frozen router must not start an evicting load")
+	require.Equal(t, process.StateReady, a.State())
+	require.Equal(t, process.StateReady, c.State())
 }
 
 // BenchmarkCapacity_EvictionFor measures uncached planning as residency grows.

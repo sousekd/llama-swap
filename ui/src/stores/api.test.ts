@@ -26,6 +26,7 @@ import {
   uiConfig,
   helpAgentEnabled,
 } from "./api";
+import { resetFreezeState, swapsFrozen } from "./freeze";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -33,6 +34,7 @@ afterEach(() => {
   playgroundModels.set([]);
   profiles.set([]);
   activeProfile.set(null);
+  resetFreezeState();
   tailcatStatus.set({ enabled: false, address: "", models: [] });
 });
 
@@ -234,6 +236,20 @@ describe("api store event handling", () => {
       data: JSON.stringify({ paused: false }),
     }));
     expect(get(inferencePaused)).toBe(false);
+  });
+
+  it("applies freeze change events", () => {
+    resetFreezeState();
+    handleAPIEventMessage(JSON.stringify({
+      type: "freezeChanged",
+      data: JSON.stringify({ frozen: true }),
+    }));
+    expect(get(swapsFrozen)).toBe(true);
+    handleAPIEventMessage(JSON.stringify({
+      type: "freezeChanged",
+      data: JSON.stringify({ frozen: false }),
+    }));
+    expect(get(swapsFrozen)).toBe(false);
   });
 
   it("ignores a pause response that arrives after a newer resume", async () => {
