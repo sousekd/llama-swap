@@ -335,6 +335,7 @@ func (mp *metricsMonitor) record(modelID string, task hint.Task, r *http.Request
 	} else if u.Found {
 		tm.Tokens = u.Tokens
 		tm.DurationMs = u.DurationMs
+		recorder.observer.applyRateFallback(&tm.Tokens)
 	}
 
 	tm.CaptureID = mp.newCaptureID(tm.Timestamp)
@@ -482,6 +483,7 @@ type responseBodyCopier struct {
 	http.ResponseWriter
 	body        *bytes.Buffer
 	tee         io.Writer
+	observer    *chatStreamObserver
 	status      int
 	wroteHeader bool
 	start       time.Time
@@ -499,6 +501,8 @@ func newBodyCopier(w http.ResponseWriter) *responseBodyCopier {
 }
 
 func (w *responseBodyCopier) Write(b []byte) (int, error) {
+	// Stamp before forwarding so a slow client does not stretch this write's interval.
+	elapsed := time.Since(w.start)
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
@@ -508,7 +512,17 @@ func (w *responseBodyCopier) Write(b []byte) (int, error) {
 	if w.status == http.StatusSwitchingProtocols {
 		return w.ResponseWriter.Write(b)
 	}
-	return w.tee.Write(b)
+	n, err := w.tee.Write(b)
+	if w.observer != nil {
+		if err != nil || n != len(b) ||
+			!strings.Contains(w.Header().Get("Content-Type"), "text/event-stream") ||
+			w.Header().Get("Content-Encoding") != "" {
+			w.observer = nil
+		} else {
+			w.observer.observe(b, elapsed)
+		}
+	}
+	return n, err
 }
 
 func (w *responseBodyCopier) WriteHeader(statusCode int) {
