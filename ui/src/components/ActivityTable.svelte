@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ActivityLogEntry, InflightRequestEntry, ReqRespCapture } from "../lib/types";
   import { cancelInflightRequest, getCapture, uiConfig } from "../stores/api";
+  import { isLocked } from "../stores/pin";
   import { persistentStore } from "../stores/persistent";
   import { flip } from "svelte/animate";
   import { tick } from "svelte";
@@ -302,7 +303,7 @@
   });
 
   async function viewCapture(entry: ActivityLogEntry) {
-    if (!entry.capture_id) return;
+    if ($isLocked || !entry.capture_id) return;
     loadingCaptureId = entry.id;
     const capture = await getCapture(entry.capture_id);
     loadingCaptureId = null;
