@@ -3,7 +3,7 @@ title: Observability, storage and Activity
 summary: Use logs, metrics, captures and the Activity view to diagnose requests and retain useful history.
 category: guides
 tags: [operations, logs, metrics, activity, captures, stdout, http]
-config_keys: [logLevel, logToStdout, metricsMaxInMemory, captureBuffer, store.path, store.persistCaptures]
+config_keys: [logLevel, logToStdout, metricsMaxInMemory, captureBuffer, store.path, store.persistCaptures, adminPin]
 updated: 2026-10-31
 ---
 
@@ -103,3 +103,16 @@ histograms. They are best-effort operational estimates, not directly comparable
 engine benchmarks. Buffering, chunk batching and multiple choices affect
 accuracy. Compressed, incomplete, usage-free and single-write streams can
 leave one or both rates unavailable. Other API stream formats are not estimated.
+
+## Activity capture UI lock
+
+This fork can require a PIN before the Activity capture View control is usable:
+
+```yaml
+adminPin: "1234"
+```
+
+Unlock lasts for the browser session; without `adminPin`, the UI is unlocked.
+The lock applies to both in-memory and persisted captures. It is a lightweight
+UI privacy barrier, not authentication: metrics, capture APIs and database
+files are not protected. Do not use it to secure sensitive stored captures.
