@@ -1,6 +1,6 @@
 <script lang="ts">
   import { link } from "svelte-spa-router";
-  import { FerrisWheel, Boxes, Activity, Cat, ScrollText, Gauge, Cpu, Sun, Moon, Monitor, ChevronRight, Settings, CircleQuestionMark, Snowflake } from "@lucide/svelte";
+  import { FerrisWheel, Boxes, Activity, Cat, ScrollText, Gauge, Cpu, Sun, Moon, Monitor, ChevronRight, Settings, CircleQuestionMark, Snowflake, Lock } from "@lucide/svelte";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import * as Collapsible from "$lib/components/ui/collapsible/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -9,6 +9,7 @@
   import { playgroundActivity, docsAgentStreaming } from "../stores/playgroundActivity";
   import { performanceEnabled, models, tailcatStatus, helpAgentEnabled } from "../stores/api";
   import { setFreeze, swapsFrozen } from "../stores/freeze";
+  import { isLocked } from "../stores/pin";
   import { showUnlistedModels } from "../stores/modelDisplay";
   import { modelsMenuOpen, modelsGroupsCollapsed } from "../stores/sidebar";
   import { groupModelsByClass, modelClassLabels, sectionStatusDotColor } from "../lib/modelClasses";
@@ -16,6 +17,7 @@
   import { isComposingKey } from "../lib/ime";
   import ConnectionStatus from "./ConnectionStatus.svelte";
   import MiddleTruncate from "./MiddleTruncate.svelte";
+  import PinDialog from "./PinDialog.svelte";
 
   function handleTitleChange(newTitle: string): void {
     const sanitized = newTitle.replace(/\n/g, "").trim().substring(0, 64) || "llama-swap";
@@ -94,6 +96,7 @@
   };
 
   let freezeBusy = $state(false);
+  let pinDialogOpen = $state(false);
 
   async function toggleSwapFreeze(): Promise<void> {
     freezeBusy = true;
@@ -372,7 +375,20 @@
         <Snowflake class={freezeBusy ? "animate-spin" : ""} />
         <span class="sr-only">{$swapsFrozen ? "Resume model swaps" : "Freeze model swaps"}</span>
       </Button>
+      {#if $isLocked}
+        <Button
+          variant="ghost"
+          size="icon"
+          onclick={() => (pinDialogOpen = true)}
+          title="Unlock admin features"
+        >
+          <Lock />
+          <span class="sr-only">Unlock admin features</span>
+        </Button>
+      {/if}
     </div>
   </Sidebar.Footer>
   <Sidebar.Rail />
 </Sidebar.Root>
+
+<PinDialog bind:open={pinDialogOpen} />
