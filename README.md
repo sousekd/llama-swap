@@ -49,14 +49,22 @@ and it survives a config reload; freeze does not.
 
 Branch: `candidate/chat-stream-speed-estimates`
 
-Activity estimates prompt and generation speeds for streamed Chat Completions
-from observed arrival times and token counts in the final usage chunk. Native
-rates take precedence per field.
+After upstream's engine-specific usage extraction, Activity fills missing
+prompt and generation speeds for streamed Chat Completions from observed
+arrival times and token counts in the final usage chunk. Reported rates,
+including zero, take precedence per field. The fallback applies to recognized
+engines as well as generic servers and peers when their response omits rates.
 
 Clients must request `stream_options.include_usage` when their backend does not
 send final usage by default. Buffering and chunk batching affect accuracy, and
 compressed, incomplete, or usage-free streams cannot supply estimates.
 Requests are not rewritten to enable usage reporting.
+
+These are proxy-observed operational estimates, not engine benchmarks. The
+prompt estimate includes queueing, loading and proxy/network latency; the
+generation estimate is affected by stream buffering. They remain in the
+existing Prefill and Decode columns, exports and histograms without separate
+provenance fields.
 
 ### Configured model order
 
@@ -102,8 +110,11 @@ base-path helper, so the lock also works when llama-swap is served under a path
 prefix. See
 [discussion #640](https://github.com/mostlygeek/llama-swap/discussions/640).
 
+The lock follows upstream's string capture IDs and also applies when captures
+are persisted with `store.persistCaptures`.
+
 `adminPin` protects only the Activity capture View control. It does NOT restrict
-access to any API.
+access to any API or protect the SQLite files.
 
 ## Previously included
 
