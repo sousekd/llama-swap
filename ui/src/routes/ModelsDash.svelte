@@ -105,11 +105,8 @@
   let localClassGroups = $derived(
     groupModelsByClass(localModels).filter((group) => group.models.length > 0)
   );
-  // Unified view: one list, same locale-aware order the sections use, so
-  // switching modes does not reshuffle models that stay visible.
-  let sortedLocalModels = $derived(
-    [...localModels].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
-  );
+  // Unified view: the same listing order the sections keep, so switching
+  // modes does not reshuffle models that stay visible.
   let peerModels = $derived(visibleModels.filter((model) => model.peerID));
   // One section per configured peer from /api/peers, so a peer without
   // models (a failed first fetch, an empty catalog) keeps its error and
@@ -606,7 +603,7 @@
           {/each}
         {/if}
       {:else}
-        {@render modelSection("local", "Local models", sortedLocalModels)}
+        {@render modelSection("local", "Local models", localModels)}
       {/if}
     </TabsContent>
 

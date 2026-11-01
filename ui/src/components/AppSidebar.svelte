@@ -75,11 +75,6 @@
   let localClassGroups = $derived(
     groupModelsByClass(visibleLocalModels).filter((group) => group.models.length > 0),
   );
-  // Without categories (the Models page's "Categories" display option), one
-  // list in the same order the Models page uses.
-  let sortedLocalModels = $derived(
-    [...visibleLocalModels].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })),
-  );
 
   function isGroupCollapsed(classId: string): boolean {
     return $modelsGroupsCollapsed[classId] === true;
@@ -341,9 +336,9 @@
                       {@render categoryGroupItem(group.class, modelClassLabels[group.class], group.models)}
                     {/each}
                   </ul>
-                {:else if sortedLocalModels.length > 0}
+                {:else if visibleLocalModels.length > 0}
                   <Sidebar.MenuSub class="my-0.5">
-                    {#each sortedLocalModels as model (model.id)}
+                    {#each visibleLocalModels as model (model.id)}
                       {@render modelMenuItem(model)}
                     {/each}
                   </Sidebar.MenuSub>
