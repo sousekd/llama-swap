@@ -118,3 +118,23 @@ What goes wrong:
 
 Do not put secrets in captures or debug logs. Reduce retention after diagnosing
 an issue.
+
+## Streamed Chat decode speed fallback
+
+Activity prefers rates reported by the inference engine. For streamed Chat
+Completions, a missing Decode rate falls back to a proxy-observed estimate,
+including for recognized engines that omit timing fields. A standard final
+usage chunk with an exact `completion_tokens` count is required. Some backends
+require clients to request `stream_options.include_usage`; llama-swap does not
+rewrite requests to enable it.
+
+The Decode estimate divides the remaining output tokens (`completion_tokens - 1`)
+by the first-to-last output chunk interval, which excludes model loading,
+queueing, and prefill time. Reported rates, including zero, are never replaced,
+and Prefill rate (`PromptPerSecond`) is never estimated because
+request-to-first-token time includes queueing and model loading.
+
+These values appear in the existing Decode column, exports, and histograms.
+Buffering, chunk batching, and multiple choices affect accuracy. Compressed,
+incomplete, usage-free, single-token, and single-write streams leave the rate
+unavailable. Other API stream formats are not estimated.
