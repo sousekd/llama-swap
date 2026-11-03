@@ -79,6 +79,10 @@ The Models list keeps that order inside each capability section and in the
 unified list shown when Categories is off. Sections group by class without
 re-sorting their rows.
 
+The sidebar's Models sub-menu groups local models into the same collapsible
+capability sections and keeps configured order inside each one, instead of
+sorting members by ID.
+
 Reordering models can change automatically assigned ports. Configurations that
 expose fixed ports to other services should use explicit values in both `cmd`
 and `proxy`. Under `router.use: capacity` the order still drives `${PORT}`
