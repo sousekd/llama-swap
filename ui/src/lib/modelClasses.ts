@@ -59,6 +59,7 @@ export interface ModelClassGroup<T extends { id: string } & Classifiable> {
 }
 
 /**
+/**
  * Aggregate of the row status dots: green when any model in the group is
  * ready, amber while one is starting or stopping, gray otherwise. Mirrors the
  * per-model status dot so a collapsed section or folded sub-menu still shows
@@ -74,18 +75,15 @@ export function sectionStatusDotColor(models: Pick<Model, "state">[]): string {
 }
 
 /**
- * Groups models by class in MODEL_CLASS_ORDER, sorting each group by ID with a
- * locale-aware numeric compare - the backend sorts /v1/models by raw ASCII,
- * which scatters mixed-case IDs (gemma-4 lands after every uppercase name)
- * and cannot order Qwen3.5 against Qwen3.8 numerically.
+ * Groups models by class in MODEL_CLASS_ORDER, preserving the caller's order
+ * inside each group: the API returns configured (params.yaml declaration)
+ * order, so re-sorting here would discard the operator's arrangement.
  */
 export function groupModelsByClass<T extends { id: string } & Classifiable>(
   models: T[],
 ): ModelClassGroup<T>[] {
   return MODEL_CLASS_ORDER.map((cls) => ({
     class: cls,
-    models: models
-      .filter((m) => classifyModel(m) === cls)
-      .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })),
+    models: models.filter((m) => classifyModel(m) === cls),
   }));
 }
