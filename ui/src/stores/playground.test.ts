@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   playgroundTabs,
   resetUnknownPlaygroundTab,
+  selectedPlaygroundModel,
   selectedPlaygroundTab,
+  showModelInPlayground,
   type PlaygroundTab,
 } from "./playground";
 
@@ -28,5 +30,14 @@ describe("selectedPlaygroundTab", () => {
   it("no longer offers Help as a tab", () => {
     expect(playgroundTabs.map((tab) => tab.id)).not.toContain("docs");
     expect(playgroundTabs.map((tab) => tab.label)).not.toContain("Help");
+  });
+});
+
+describe("showModelInPlayground", () => {
+  it("selects the model and switches to the Chat tab", () => {
+    selectedPlaygroundTab.set("rerank");
+    showModelInPlayground("peer-a:model-b");
+    expect(get(selectedPlaygroundModel)).toBe("peer-a:model-b");
+    expect(get(selectedPlaygroundTab)).toBe("chat");
   });
 });
