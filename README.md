@@ -25,7 +25,8 @@ Branch: `candidate/freeze-swaps`
 
 The sidebar's snowflake button freezes request-driven swaps: requests requiring
 an eviction return HTTP 409; already running models and eviction-free loads
-continue normally.
+continue normally. That covers `/v1/realtime` too: a websocket for a model that
+would need an eviction is refused with the same 409 before the upgrade.
 
 Both `router.use: group` and `router.use: capacity` honor the freeze. In
 capacity mode a request that must evict to fit its pools receives the same 409.
