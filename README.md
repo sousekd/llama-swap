@@ -97,6 +97,20 @@ The model detail page opens the Playground with that model preselected in the
 Chat tab. Unlisted models keep no Playground action because the Playground only
 selects from the `/v1/models` listing, which omits them.
 
+### Decisions category
+
+Branch: `candidate/decisions-model-class`
+
+Decision models answer `/v1/systemone` and report `out: [decisions]` in
+`/v1/models`, but they produce no text. The Models list and the sidebar's
+Models sub-menu now give them a Decisions section instead of falling back to
+Chat.
+
+A decision model that accepts image input also carries the `vision` flag, so
+the Decisions check runs before the capability flags rather than after them.
+The Playground's Chat tab is unaffected: its matcher already requires text
+output.
+
 ## Fork-only changes
 
 ### Admin PIN lock
