@@ -112,6 +112,10 @@ the Decisions check runs before the capability flags rather than after them.
 The Playground's Chat tab is unaffected: its matcher already requires text
 output.
 
+`/v1/models` also flags them with `capabilities.decisions: true`, so the
+Models list shows a Decisions badge after the other capability badges and
+before the context length, and the model's Details card lists it too.
+
 ## Fork-only changes
 
 ### Admin PIN lock
