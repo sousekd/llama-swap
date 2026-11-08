@@ -26,7 +26,11 @@ Branch: `candidate/freeze-swaps`
 The sidebar's snowflake button freezes request-driven swaps: requests requiring
 an eviction return HTTP 409; already running models and eviction-free loads
 continue normally. That covers `/v1/realtime` too: a websocket for a model that
-would need an eviction is refused with the same 409 before the upgrade.
+would need an eviction is refused with the same 409 before the upgrade. When a
+client omits `?model=` and names the model in its first `session.update` event,
+upstream completes the handshake before the model is known, so the refusal
+instead arrives as an OpenAI style `error` event and a close frame on the
+already open socket; the model name and the reason appear in its message.
 
 Both `router.use: group` and `router.use: capacity` honor the freeze. In
 capacity mode a request that must evict to fit its pools receives the same 409.
