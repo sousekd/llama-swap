@@ -363,7 +363,15 @@ Review each new upstream surface against every candidate and local feature:
 - new routes that bypass a local UI or access-control boundary;
 - config/schema overlap;
 - sidebar or other UI collisions;
-- changed scheduler, router, process, or response contracts.
+- changed scheduler, router, process, or response contracts;
+- generated copies that must be regenerated after the fork's changes.
+
+When the fork adds a key to the root `config-schema.json`, run
+`go generate ./docs`. The `docs` package embeds `docs/config-schema.json` and
+`docs/docs-agent-prompt.md` copies of the root schema and of the prompt in
+`ui/src/lib/prompts/docsAgent.ts`, and `TestDocs_GeneratedFilesAreCurrent`
+fails while a copy is stale. Commit the regenerated copy on the first-parent
+line: upstream owns the file, but the fork's copy carries fork-only keys.
 
 Keep reconciliation scoped. Candidate fixes belong on the candidate branch and
 must be remerged. Local compatibility fixes belong on integration's
@@ -392,9 +400,9 @@ Windows in this repository:
 
 ```powershell
 .dev/check-go-format.ps1
-go test -short -count=1 ./internal/...
-go test -race -count=1 -short ./internal/...
-go test -race -count=1 ./internal/...
+go test -short -count=1 ./internal/... ./docs/... ./docbot/...
+go test -race -count=1 -short ./internal/... ./docs/... ./docbot/...
+go test -race -count=1 ./internal/... ./docs/... ./docbot/...
 go test -count=1 .
 staticcheck ./internal/...
 go build ./...
@@ -402,6 +410,9 @@ npm --prefix ui run check
 npm --prefix ui test
 npm --prefix ui run build
 ```
+
+`make test-dev` and `make test-all` already include `./docs/...` and
+`./docbot/...`; keep the explicit Windows lines in step with them.
 
 Prepare dependencies in each validation worktree and build its test responder
 (`go build -o build/simple-responder.exe ./cmd/simple-responder` on Windows).
