@@ -138,3 +138,5 @@ Fork features removed after upstream gained equivalent behavior:
 	[pool-scoped](https://github.com/mostlygeek/llama-swap/issues/632) constraints.
 - **Profile target actions:** native in upstream
 	([PR #1170](https://github.com/mostlygeek/llama-swap/pull/1170)).
+- **Decisions category and badge:** native in upstream
+	([PR #1318](https://github.com/mostlygeek/llama-swap/pull/1318)).
