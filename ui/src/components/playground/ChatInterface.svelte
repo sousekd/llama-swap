@@ -7,6 +7,7 @@
   import { currentStats, markCancelled, startTracking, trackChunk } from "../../lib/generationStats";
   import { DOCS_AGENT_SYSTEM_PROMPT } from "../../lib/prompts/docsAgent";
   import { playgroundStores } from "../../stores/playgroundActivity";
+  import { selectedPlaygroundModel } from "../../stores/playground";
   import type { ChatMessage, ContentPart } from "../../lib/types";
   import { isSubmitEnter } from "../../lib/ime";
   import ChatMessageComponent from "./ChatMessage.svelte";
@@ -23,7 +24,6 @@
   import { Tabs, TabsContent, TabsList, TabsTrigger } from "$lib/components/ui/tabs/index.js";
   import { X } from "@lucide/svelte";
 
-  const selectedModelStore = persistentStore<string>("playground-selected-model", "");
   const systemPromptStore = persistentStore<string>("playground-system-prompt", "");
   const temperatureStore = persistentStore<number>("playground-temperature", 0.7);
   const endpointStore = persistentStore<Endpoint>("playground-endpoint", "v1/chat/completions");
@@ -80,7 +80,7 @@
    * not model entries themselves, so those resolve through their model.
    */
   function selectedContextLength(): number | undefined {
-    const id = $selectedModelStore;
+    const id = $selectedPlaygroundModel;
     return $playgroundModels.find((m) => m.id === id || m.aliases?.includes(id))?.context_length;
   }
 
@@ -168,7 +168,7 @@
 
   async function sendMessage() {
     const trimmedInput = userInput.trim();
-    if ((!trimmedInput && attachedImages.length === 0) || !$selectedModelStore || isStreaming) return;
+    if ((!trimmedInput && attachedImages.length === 0) || !$selectedPlaygroundModel || isStreaming) return;
 
     userScrolledUp = false;
 
@@ -303,7 +303,7 @@
 
     try {
       const stream = streamChatCompletion(
-        $selectedModelStore,
+        $selectedPlaygroundModel,
         requestMessages(),
         abortController.signal,
         {
@@ -337,7 +337,7 @@
   }
 
   async function editMessage(idx: number, newContent: string) {
-    if (isStreaming || !$selectedModelStore) return;
+    if (isStreaming || !$selectedPlaygroundModel) return;
 
     // Update the user message at the specified index
     messages = messages.map((msg, i) =>
@@ -421,7 +421,7 @@
   <!-- Model selector and controls -->
   <div class="mb-3 flex shrink-0 gap-2">
     <ModelSelector
-      bind:value={$selectedModelStore}
+      bind:value={$selectedPlaygroundModel}
       placeholder="Select a model..."
       disabled={isStreaming}
       match={{ inputModalities: ["text", "image"], outputModalities: ["text"] }}
@@ -619,7 +619,7 @@
         bind:value={userInput}
         placeholder="Type a message..."
         onkeydown={handleKeyDown}
-        disabled={isStreaming || !$selectedModelStore}
+        disabled={isStreaming || !$selectedPlaygroundModel}
         streaming={isStreaming}
         canSend={Boolean(userInput.trim()) || attachedImages.length > 0}
         onsend={sendMessage}
@@ -660,7 +660,7 @@
             size="icon-lg"
             class="text-muted-foreground shrink-0 rounded-full"
             onclick={() => fileInput?.click()}
-            disabled={isStreaming || !$selectedModelStore}
+            disabled={isStreaming || !$selectedPlaygroundModel}
             title="Attach image"
             aria-label="Attach image"
           >
