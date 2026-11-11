@@ -105,6 +105,24 @@ models:
 	}
 }
 
+func TestConfig_ModelOrderSupportsYAMLMapAlias(t *testing.T) {
+	content := "defs:\n" +
+		"  models: &models\n" +
+		"    zeta:\n" +
+		"      cmd: echo ${PORT}\n" +
+		"      proxy: http://localhost:${PORT}\n" +
+		"    alpha:\n" +
+		"      cmd: echo ${PORT}\n" +
+		"      proxy: http://localhost:${PORT}\n" +
+		"models: *models\n"
+
+	config, err := LoadConfigFromReader(strings.NewReader(content))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"zeta", "alpha"}, config.OrderedModelIDs())
+	assert.Equal(t, "echo 5800", config.Models["zeta"].Cmd)
+	assert.Equal(t, "echo 5801", config.Models["alpha"].Cmd)
+}
+
 func TestConfig_MacroResolvedStartPort(t *testing.T) {
 	content := `
 macros:
