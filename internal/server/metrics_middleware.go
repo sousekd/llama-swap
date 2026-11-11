@@ -89,6 +89,8 @@ func CreateMetricsMiddleware(mm *metricsMonitor, cfg config.Config) chain.Middle
 			if websocket {
 				recorder.realtime = newRealtimeSession()
 			}
+			// nil for anything but Chat Completions, realtime included.
+			recorder.observer = newChatStreamObserver(checkPath)
 			// For a websocket this returns when the session ends.
 			next.ServeHTTP(recorder, r)
 			// A request abandoned before any response was written must not be
