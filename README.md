@@ -50,6 +50,13 @@ and rejects all local inference with HTTP 503, while freeze leaves the resident
 models serving and declines only evictions. Pause wins when both are active,
 and it survives a config reload; freeze does not.
 
+Upstream's `fit` selector is another partial decline. A fit selector with
+`no_evict: true` answers HTTP 429 when every target would evict a running model.
+Selection runs before the swap freeze, so fit still starts an eviction-free
+target while swaps are frozen and reports the 409 only when nothing fits. Freeze
+covers the paths fit does not: manual `/upstream/...` loads, realtime sessions,
+queued requests, and every router mode other than `fit`.
+
 ### Chat stream speed estimates
 
 Branch: `candidate/chat-stream-speed-estimates`
@@ -86,7 +93,9 @@ re-sorting their rows.
 
 The sidebar's Models sub-menu groups local models into the same collapsible
 capability sections and keeps configured order inside each one, instead of
-sorting members by ID.
+sorting members by ID. The lists and the Playground model picker also keep the
+server's order instead of sorting client-side: selectors, including upstream's
+`fit` selectors, arrive after the local models in deterministic ID order.
 
 Reordering models can change automatically assigned ports. Configurations that
 expose fixed ports to other services should use explicit values in both `cmd`
