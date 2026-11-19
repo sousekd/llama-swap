@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get } from "svelte/store";
+  import { untrack } from "svelte";
   import { hasListedModels, playgroundModels } from "../../stores/api";
   import { persistentStore } from "../../stores/persistent";
   import { showGenerationStats } from "../../stores/generationStats";
@@ -7,6 +8,7 @@
   import { currentStats, markCancelled, startTracking, trackChunk } from "../../lib/generationStats";
   import { DOCS_AGENT_SYSTEM_PROMPT } from "../../lib/prompts/docsAgent";
   import { playgroundStores } from "../../stores/playgroundActivity";
+  import { playgroundIntent, selectedPlaygroundModel, takePlaygroundIntent } from "../../stores/playground";
   import type { ChatMessage, ContentPart } from "../../lib/types";
   import { isSubmitEnter } from "../../lib/ime";
   import { appendImageFiles, pasteImageFiles } from "../../lib/chatImages";
@@ -28,7 +30,6 @@
   import { Tabs, TabsContent, TabsList, TabsTrigger } from "$lib/components/ui/tabs/index.js";
   import { X } from "@lucide/svelte";
 
-  const selectedModelStore = persistentStore<string>("playground-selected-model", "");
   const systemPromptStore = persistentStore<string>("playground-system-prompt", "");
   const parameterEnabledStore = persistentStore("playground-parameters-enabled", {
     temperature: true,
@@ -76,6 +77,15 @@
     sanitize: (msgs) => msgs.filter((msg) => msg.role !== "tool" && !msg.tool_calls?.length),
   });
 
+  // "Open in Playground" starts a fresh conversation. Clearing the active id
+  // before useConversation reads it skips history restore, which would put the
+  // saved conversation's model back over the one the detail page selected.
+  const pendingModel = takePlaygroundIntent();
+  if (pendingModel) {
+    selectedPlaygroundModel.set(pendingModel);
+    history.activeId.set(null);
+  }
+
   let messages = $state<PlainMessage[]>([]);
   let userInput = $state("");
   let isStreaming = $state(false);
@@ -98,7 +108,7 @@
    * not model entries themselves, so those resolve through their model.
    */
   function selectedContextLength(): number | undefined {
-    const id = $selectedModelStore;
+    const id = $selectedPlaygroundModel;
     return $playgroundModels.find((m) => m.id === id || m.aliases?.includes(id))?.context_length;
   }
 
@@ -171,7 +181,7 @@
 
   function currentSettings(): ChatSettings {
     return {
-      model: $selectedModelStore,
+      model: $selectedPlaygroundModel,
       systemPrompt: $systemPromptStore,
       endpoint: $endpointStore,
       parameterEnabled: { ...$parameterEnabledStore },
@@ -193,7 +203,7 @@
     if (gone) {
       historyNotice = `Model "${settings.model}" is no longer available; using the selected model instead.`;
     } else {
-      selectedModelStore.set(settings.model);
+      selectedPlaygroundModel.set(settings.model);
     }
     systemPromptStore.set(settings.systemPrompt);
     endpointStore.set(settings.endpoint);
@@ -214,6 +224,32 @@
     isStreaming: () => isStreaming,
   });
 
+  // The Playground stays mounted while the user looks at a model, so "Open in
+  // Playground" can arrive after Chat is already on screen. The intent taken
+  // above covers a fresh page; this covers the mounted page.
+  $effect(() => {
+    const model = $playgroundIntent;
+    if (!model) return;
+    untrack(() => void startConversationWith(model));
+  });
+
+  /**
+   * Saves what is on screen, clears it, and only then selects `model`.
+   * Selecting first would make the flush record the previous conversation
+   * under the new model, which is the history corruption the intent prevents.
+   */
+  async function startConversationWith(model: string) {
+    takePlaygroundIntent();
+    if (isStreaming) {
+      cancelStreaming();
+    }
+    historyNotice = null;
+    await conversation.newChat();
+    selectedPlaygroundModel.set(model);
+    isReasoning = false;
+    reasoningStartTime = 0;
+  }
+
   function selectHistory(id: string) {
     void conversation.open(id).then((ok) => {
       if (ok) {
@@ -226,7 +262,8 @@
 
   async function sendMessage() {
     const trimmedInput = userInput.trim();
-    if ((!trimmedInput && attachedImages.length === 0) || !$selectedModelStore || isStreaming || conversation.loading) return;
+    if ((!trimmedInput && attachedImages.length === 0) || !$selectedPlaygroundModel || isStreaming || conversation.loading)
+      return;
 
     userScrolledUp = false;
 
@@ -362,7 +399,7 @@
 
     try {
       const stream = streamChatCompletion(
-        $selectedModelStore,
+        $selectedPlaygroundModel,
         requestMessages(),
         abortController.signal,
         {
@@ -396,7 +433,7 @@
   }
 
   async function editMessage(idx: number, newContent: string) {
-    if (isStreaming || conversation.loading || !$selectedModelStore) return;
+    if (isStreaming || conversation.loading || !$selectedPlaygroundModel) return;
 
     // Update the user message at the specified index
     messages = messages.map((msg, i) =>
@@ -446,7 +483,7 @@
   <div class="mb-3 flex shrink-0 gap-2">
     <HistoryMenu {history} disabled={isStreaming} onSelect={selectHistory} onCleared={conversation.detach} />
     <ModelSelector
-      bind:value={$selectedModelStore}
+      bind:value={$selectedPlaygroundModel}
       placeholder="Select a model..."
       disabled={isStreaming}
       match={{ inputModalities: ["text", "image"], outputModalities: ["text"] }}
@@ -701,7 +738,7 @@
         placeholder="Type a message..."
         onkeydown={handleKeyDown}
         onpaste={handleImagePaste}
-        disabled={isStreaming || conversation.loading || !$selectedModelStore}
+        disabled={isStreaming || conversation.loading || !$selectedPlaygroundModel}
         streaming={isStreaming}
         canSend={Boolean(userInput.trim()) || attachedImages.length > 0}
         onsend={sendMessage}
@@ -742,7 +779,7 @@
             size="icon-lg"
             class="text-muted-foreground shrink-0 rounded-full"
             onclick={() => fileInput?.click()}
-            disabled={isStreaming || conversation.loading || !$selectedModelStore}
+            disabled={isStreaming || conversation.loading || !$selectedPlaygroundModel}
             title="Attach image or paste it into the message box"
             aria-label="Attach image"
           >
