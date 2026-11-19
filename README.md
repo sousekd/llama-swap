@@ -97,6 +97,11 @@ sorting members by ID. The lists and the Playground model picker also keep the
 server's order instead of sorting client-side: selectors, including upstream's
 `fit` selectors, arrive after the local models in deterministic ID order.
 
+Upstream drops redundant picker rows while keeping that order: a model row
+always wins over an alias with the same name, and a repeated alias keeps its
+first occurrence. The picker therefore shows every model exactly once in
+declaration order, even when an alias names another model's ID.
+
 Reordering models can change automatically assigned ports. Configurations that
 expose fixed ports to other services should use explicit values in both `cmd`
 and `proxy`. Under `router.use: capacity` the order still drives `${PORT}`
@@ -108,8 +113,13 @@ unaffected.
 Branch: `candidate/playground-link`
 
 The model detail page opens the Playground with that model preselected in the
-Chat tab. Unlisted models keep no Playground action because the Playground only
-selects from the `/v1/models` listing, which omits them.
+Chat tab, starting a new Chat conversation. Upstream restores the last saved
+conversation together with its model and parameters, so the link would lose the
+model it selected if it let history restore; the chosen model wins instead.
+The conversation on screen is saved before the new one starts, so it stays in
+the History menu whenever the history limit keeps more than one. Unlisted
+models keep no Playground action because the Playground only selects from the
+`/v1/models` listing, which omits them.
 
 ## Fork-only changes
 
