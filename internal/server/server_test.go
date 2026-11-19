@@ -43,6 +43,7 @@ type stubRouter struct {
 	loggers       map[string]*logmon.Monitor
 	evictions     map[string]router.Eviction
 	evictionsErr  error
+	frozen        atomic.Bool
 }
 
 func newStubRouter(models []string, response string) *stubRouter {
@@ -84,6 +85,8 @@ func (s *stubRouter) Evictions(_ context.Context, targets ...string) (map[string
 	}
 	return out, nil
 }
+func (s *stubRouter) SwapsFrozen() bool          { return s.frozen.Load() }
+func (s *stubRouter) SetSwapsFrozen(frozen bool) { s.frozen.Store(frozen) }
 func (s *stubRouter) Unload(timeout time.Duration, models ...string) {
 	s.unloadCalls.Add(1)
 	s.unloadTimeout = timeout

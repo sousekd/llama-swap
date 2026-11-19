@@ -936,3 +936,49 @@ func TestBaseRouter_SetsLocalHint(t *testing.T) {
 		t.Errorf("hint = %+v, want local vllm", *h)
 	}
 }
+
+// A request that would evict a running model must be refused with the 409
+// envelope while swaps are frozen: this is the exact response a manual model
+// load forwards to the model action UI, and the client must see the reason.
+func TestBaseRouter_FrozenSwapReturnsConflict(t *testing.T) {
+	target := newFakeProcess("target")
+	target.autoReady = true
+	victim := newFakeProcess("victim")
+	victim.markReady()
+
+	b := newTestBase(t, map[string]process.Process{"target": target, "victim": victim},
+		&stubPlanner{evict: map[string][]string{"target": {"victim"}}})
+	b.SetSwapsFrozen(true)
+
+	w := httptest.NewRecorder()
+	b.ServeHTTP(w, newRequest("target"))
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%q want %d", w.Code, w.Body.String(), http.StatusConflict)
+	}
+	var envelope swaputil.ErrorEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal %q: %v", w.Body.String(), err)
+	}
+	if envelope.Src != "llama-swap" {
+		t.Errorf("src=%q want llama-swap", envelope.Src)
+	}
+	if !strings.Contains(envelope.Error.Message, "swaps are frozen") {
+		t.Errorf("message=%q want the freeze reason", envelope.Error.Message)
+	}
+	if got := victim.State(); got != process.StateReady {
+		t.Errorf("victim state=%q want ready: a frozen rejection must not evict", got)
+	}
+	if got := target.runCalls.Load(); got != 0 {
+		t.Errorf("target runCalls=%d want 0: a frozen rejection must not start the model", got)
+	}
+
+	// Resuming swaps lets the same request through, proving the refusal came
+	// from the freeze rather than the eviction itself.
+	b.SetSwapsFrozen(false)
+	w = httptest.NewRecorder()
+	b.ServeHTTP(w, newRequest("target"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("unfrozen status=%d body=%q want 200", w.Code, w.Body.String())
+	}
+}
