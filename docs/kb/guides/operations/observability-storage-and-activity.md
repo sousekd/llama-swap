@@ -118,3 +118,24 @@ What goes wrong:
 
 Do not put secrets in captures or debug logs. Reduce retention after diagnosing
 an issue.
+
+## Streamed Chat speed fallback
+
+Activity prefers rates reported by the inference engine. For streamed Chat
+Completions, missing rates can fall back independently to proxy-observed
+estimates, including for recognized engines that omit timing fields. A
+standard final usage chunk with exact token counts is required. Some backends
+require clients to request `stream_options.include_usage`; llama-swap does not
+rewrite requests to enable it.
+
+The prompt estimate divides uncached input tokens by dispatch-to-first-output
+time, including queueing, model loading and proxy/network latency. Unknown
+cache usage is treated as zero for this estimate. The generation estimate
+divides the remaining output tokens by the first-to-last output interval.
+Reported rates, including zero, are never replaced.
+
+These values appear in the existing Prefill and Decode columns, exports and
+histograms. They are best-effort operational estimates, not directly comparable
+engine benchmarks. Buffering, chunk batching and multiple choices affect
+accuracy. Compressed, incomplete, usage-free and single-write streams can
+leave one or both rates unavailable. Other API stream formats are not estimated.
