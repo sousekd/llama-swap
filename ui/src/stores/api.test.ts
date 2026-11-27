@@ -225,6 +225,50 @@ describe("api store event handling", () => {
     }
   });
 
+  it("preserves backend model order in status events", () => {
+    handleAPIEventMessage(JSON.stringify({
+      type: "modelStatus",
+      data: JSON.stringify([
+        { id: "zeta", name: "Zulu" },
+        { id: "alpha", name: "Alpha" },
+      ]),
+    }));
+
+    expect(get(models).map((model) => model.id)).toEqual(["zeta", "alpha"]);
+  });
+
+  it("tracks loading progress without disturbing configured order", () => {
+    const feed = (list: unknown[]) => handleAPIEventMessage(JSON.stringify({
+      type: "modelStatus",
+      data: JSON.stringify(list),
+    }));
+
+    feed([
+      { id: "zeta", name: "Zeta", state: "starting", loadingProgress: 0.1, loadingMessage: "loading" },
+      { id: "alpha", name: "Alpha", state: "ready" },
+    ]);
+    expect(get(models).map((model) => model.id)).toEqual(["zeta", "alpha"]);
+    expect(get(models)[0].loadingProgress).toBe(0.1);
+    expect(get(models)[0].loadingMessage).toBe("loading");
+
+    // progress advances; the listing stays anchored to configured order
+    feed([
+      { id: "zeta", name: "Zeta", state: "starting", loadingProgress: 0.6, loadingMessage: "loading weights" },
+      { id: "alpha", name: "Alpha", state: "ready" },
+    ]);
+    expect(get(models).map((model) => model.id)).toEqual(["zeta", "alpha"]);
+    expect(get(models)[0].loadingProgress).toBe(0.6);
+
+    // transitions to ready: stale progress is cleared
+    feed([
+      { id: "zeta", name: "Zeta", state: "ready" },
+      { id: "alpha", name: "Alpha", state: "stopped" },
+    ]);
+    expect(get(models).map((model) => model.id)).toEqual(["zeta", "alpha"]);
+    expect(get(models)[0].loadingProgress).toBeUndefined();
+    expect(get(models)[0].loadingMessage).toBeUndefined();
+  });
+
   it("parses inflight request entries", () => {
     inFlightRequests.set(0);
     inflightRequestEntries.set([]);
@@ -492,6 +536,13 @@ describe("api store event handling", () => {
     await fetchPlaygroundModels();
 
     expect(mockFetch).toHaveBeenCalledWith("/v1/models");
+    expect(get(playgroundModels).map((model) => model.id)).toEqual([
+      "real",
+      "remote/remote-model",
+      "pool",
+      "fitter",
+      "public",
+    ]);
     expect(get(playgroundModels).map((model) => model.id)).not.toContain("variant");
     expect(get(playgroundModels).find((model) => model.id === "real")).toMatchObject({
       aliases: ["variant", "alternate"],
@@ -507,16 +558,18 @@ describe("api store event handling", () => {
       peerID: "remote",
       playgroundType: "peer",
     });
-    expect(get(selectorModels).map((model) => model.id)).toEqual(["fitter", "pool"]);
+    // Configured order, not alphabetical: the spillover selector before the
+    // fit selector because that is how /v1/models listed them.
+    expect(get(selectorModels).map((model) => model.id)).toEqual(["pool", "fitter"]);
     expect(get(selectorModels)[0]).toMatchObject({
-      strategy: "fit",
-      targets: ["real"],
-      noEvict: true,
-    });
-    expect(get(selectorModels)[1]).toMatchObject({
       strategy: "spillover",
       targets: ["real", "remote/remote-model"],
       spillover: 4,
+    });
+    expect(get(selectorModels)[1]).toMatchObject({
+      strategy: "fit",
+      targets: ["real"],
+      noEvict: true,
     });
     expect(get(profileModels).map((model) => model.id)).toEqual(["public"]);
     expect(get(hasListedModels)).toBe(true);
