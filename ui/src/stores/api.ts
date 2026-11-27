@@ -20,6 +20,7 @@ import type {
 import { appendActivityFilters, type ActivityFilters } from "../lib/activityFilters";
 import { apiUrl } from "../lib/apiPath";
 import { connectionState } from "./theme";
+import { applyFreezeEvent, resetFreezeState } from "./freeze";
 
 // Stores
 export const models = writable<Model[]>([]);
@@ -89,6 +90,7 @@ export function enableAPIEvents(enabled: boolean): void {
     profileRevision++;
     pauseRevision++;
     inferencePaused.set(false);
+    resetFreezeState();
     return;
   }
 
@@ -116,6 +118,7 @@ export function enableAPIEvents(enabled: boolean): void {
       profileRevision++;
       pauseRevision++;
       inferencePaused.set(false);
+      resetFreezeState();
       retryCount = 0;
       connectionState.set("connected");
       void fetchProfiles().catch((error) => console.error(error));
@@ -214,6 +217,14 @@ export function handleAPIEventMessage(data: string): void {
       const state = JSON.parse(message.data) as { paused: boolean };
       pauseRevision++;
       inferencePaused.set(state.paused);
+      break;
+    }
+
+    case "freezeChanged": {
+      const state = JSON.parse(message.data) as { frozen: boolean };
+      if (typeof state.frozen === "boolean") {
+        applyFreezeEvent(state.frozen);
+      }
       break;
     }
   }

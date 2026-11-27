@@ -215,7 +215,7 @@ export interface PerformanceResponse {
 }
 
 export interface APIEventEnvelope {
-  type: "modelStatus" | "logData" | "activity" | "inflight" | "uiConfig" | "profileChanged" | "pauseChanged" | "perfsys" | "perfgpu";
+  type: "modelStatus" | "logData" | "activity" | "inflight" | "uiConfig" | "profileChanged" | "pauseChanged" | "freezeChanged" | "perfsys" | "perfgpu";
   data: string;
 }
 

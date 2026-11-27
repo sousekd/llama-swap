@@ -13,6 +13,7 @@ const ProcessLoadingEventID = 0x0A
 const InferencePausedEventID = 0x0B
 const UpstreamDetectedEventID = 0x0C
 const PeerCatalogChangedEventID = 0x0D
+const SwapsFrozenEventID = 0x0E
 
 // ProcessStateChangeEvent is emitted whenever a process transitions between
 // lifecycle states. States are carried as strings so this package stays a leaf
@@ -127,4 +128,13 @@ type PeerCatalogChangedEvent struct {
 
 func (e PeerCatalogChangedEvent) Type() uint32 {
 	return PeerCatalogChangedEventID
+}
+
+// SwapsFrozenEvent is emitted when request-driven swap freeze is toggled.
+type SwapsFrozenEvent struct {
+	Frozen bool
+}
+
+func (e SwapsFrozenEvent) Type() uint32 {
+	return SwapsFrozenEventID
 }

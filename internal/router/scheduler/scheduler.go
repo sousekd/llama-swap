@@ -44,9 +44,14 @@ type Swapper interface {
 }
 
 // Scheduler decides what happens to each event the router's run loop receives.
-// All methods run on that single run-loop goroutine, so implementations need no
-// internal locking for their own state.
+// Event methods run on that single goroutine. SwapsFrozen and SetSwapsFrozen
+// may be called concurrently and must synchronize their state.
 type Scheduler interface {
+	// SwapsFrozen reports whether requests that require model eviction are rejected.
+	SwapsFrozen() bool
+	// SetSwapsFrozen enables or disables rejection of model-evicting requests
+	// and reports whether the state changed.
+	SetSwapsFrozen(frozen bool) bool
 	// OnRequest handles one incoming ServeHTTP request.
 	OnRequest(req HandlerReq)
 	// OnCancel handles a request whose client has disconnected before it was

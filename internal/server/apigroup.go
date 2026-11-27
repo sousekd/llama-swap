@@ -500,6 +500,31 @@ func (s *Server) handleAPIHardware(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleAPIFreeze reports the current swap-freeze state as {"frozen": bool}.
+func (s *Server) handleAPIFreeze(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"frozen": s.local.SwapsFrozen()})
+}
+
+// handleAPISetFreeze enables or disables the swap-freeze guard. The body is
+// JSON {"frozen": bool}; malformed JSON is a 400. The reply echoes the new
+// state.
+func (s *Server) handleAPISetFreeze(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Frozen bool `json:"frozen"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		swaputil.SendResponse(w, r, http.StatusBadRequest, "invalid freeze request")
+		return
+	}
+
+	if s.local.SetSwapsFrozen(req.Frozen) {
+		event.Emit(swaputil.SwapsFrozenEvent{Frozen: req.Frozen})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"frozen": s.local.SwapsFrozen()})
+}
+
 // handleAPICapture returns the stored request/response capture for the
 // capture ID recorded on an activity row.
 func (s *Server) handleAPICapture(w http.ResponseWriter, r *http.Request) {
@@ -547,6 +572,7 @@ const (
 	msgTypeUIConfig    messageType = "uiConfig"
 	msgTypeProfile     messageType = "profileChanged"
 	msgTypePause       messageType = "pauseChanged"
+	msgTypeFreeze      messageType = "freezeChanged"
 )
 
 // sendDropReportInterval is how often an SSE handler reports messages that
@@ -682,11 +708,20 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		sendFreeze := func(frozen bool) {
+			if j, err := json.Marshal(map[string]bool{"frozen": frozen}); err == nil {
+				send(messageEnvelope{Type: msgTypeFreeze, Data: string(j)})
+			}
+		}
+
 		unsubscribe := []context.CancelFunc{
 			event.On(func(e swaputil.ProcessStateChangeEvent) { sendModels() }),
 			event.On(func(e swaputil.ProcessLoadingEvent) { sendModels() }),
 			event.On(func(e swaputil.ModelCapabilitiesChangedEvent) { sendModels() }),
-			event.On(func(e swaputil.ConfigFileChangedEvent) { sendModels() }),
+			event.On(func(e swaputil.ConfigFileChangedEvent) {
+				sendModels()
+				sendFreeze(s.local.SwapsFrozen())
+			}),
 			event.On(func(e swaputil.PeerCatalogChangedEvent) { sendModels() }),
 			event.On(func(e swaputil.ProfileChangedEvent) {
 				sendProfile()
@@ -695,6 +730,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 			event.On(func(e ActivityLogEvent) { sendActivity(e.Metrics.ID) }),
 			event.On(func(e swaputil.InFlightRequestsEvent) { sendInFlight(e) }),
 			event.On(func(e swaputil.InferencePausedEvent) { sendPause() }),
+			event.On(func(e swaputil.SwapsFrozenEvent) { sendFreeze(e.Frozen) }),
 		}
 
 		// initial payload
@@ -702,6 +738,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 		sendUIConfig()
 		sendProfile()
 		sendPause()
+		sendFreeze(s.local.SwapsFrozen())
 		sendInFlight(s.inflight.Current())
 
 		return func() { cancelAll(unsubscribe) }
