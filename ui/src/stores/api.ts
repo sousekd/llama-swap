@@ -21,6 +21,7 @@ import { appendActivityFilters, type ActivityFilters } from "../lib/activityFilt
 import { apiUrl } from "../lib/apiPath";
 import { connectionState } from "./theme";
 import { applyFreezeEvent, resetFreezeState } from "./freeze";
+import { pinRequired } from "./pin";
 
 // Stores
 export const models = writable<Model[]>([]);
@@ -272,6 +273,7 @@ connectionState.subscribe(async (status) => {
       }
       const data: VersionInfo = await response.json();
       versionInfo.set(data);
+      pinRequired.set(data.pin_required ?? false);
     } catch (error) {
       console.error(error);
     }
