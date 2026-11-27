@@ -13,8 +13,6 @@ export async function handleLoadModel(id: string): Promise<void> {
   pendingLoads.update((p) => ({ ...p, [id]: true }));
   try {
     await loadModel(id, controller.signal);
-  } catch (e) {
-    console.error(e);
   } finally {
     loadControllers.delete(id);
     pendingLoads.update((p) => {
@@ -35,13 +33,13 @@ export function isPending(id: string): boolean {
   return val;
 }
 
-export function onToggleLoad(m: Model): void {
+export async function onToggleLoad(m: Model): Promise<void> {
   if (m.state === "stopped" && isPending(m.id)) {
     cancelLoad(m.id);
   } else if (m.state === "stopped") {
-    void handleLoadModel(m.id);
+    await handleLoadModel(m.id);
   } else if (m.state === "ready") {
-    void unloadSingleModel(m.id);
+    await unloadSingleModel(m.id);
   }
 }
 
